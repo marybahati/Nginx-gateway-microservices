@@ -1,0 +1,13 @@
+# Generated logs that may show up if a person runs scripts in the repo dir
+*.log
+*.log.*
+
+# Editor / OS junk
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*~
+
+# Local Lima state (if a person accidentally creates it in the repo)
+.lima/

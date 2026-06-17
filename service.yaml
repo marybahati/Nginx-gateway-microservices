@@ -1,0 +1,56 @@
+# Lima config for nginx-microservices.
+# Pins explicitly to Ubuntu Server 24.04 LTS (Noble Numbat)
+#
+# Usage:
+#   limactl start --name=nginx-microservices ./service.yaml
+#
+# Re-run on a clean machine to get an identical VM.
+
+# VM profile
+cpus: 1
+memory: "1GiB"
+disk: "8GiB"
+
+images:
+  # Noble Numbat (24.04) cloud images. Lima auto-picks the right one for your arch.
+  - location: "https://cloud-images.ubuntu.com/releases/noble/release/ubuntu-24.04-server-cloudimg-amd64.img"
+    arch: "x86_64"
+  - location: "https://cloud-images.ubuntu.com/releases/noble/release/ubuntu-24.04-server-cloudimg-arm64.img"
+    arch: "aarch64"
+
+# Mount ONLY a dedicated host folder (~/nginx-microservices) into the VM.
+#
+# Safety rationale: scripts in this lab run as root inside the VM. By mounting
+# only ~/nginx-microservices — not your whole home directory — a stray `sudo rm -rf` or
+# misconfigured `chown` inside the VM cannot reach files outside that folder.
+#
+# Create the folder on the host BEFORE running `limactl start`:
+#   mkdir -p ~/nginx-microservices
+#
+# Inside the VM the folder is reachable at /home/<your-user>/nginx-microservices.
+mounts:
+  - location: "~/nginx-microservices"
+    writable: true
+
+# Forward the services API to the host.
+# from macOS — people can always `curl` from inside `limactl shell`.
+portForwards:
+  - guestPort: 3001
+    hostPort: 3001
+  - guestPort: 3002
+    hostPort: 3002
+  - guestPort: 3003
+    hostPort: 3003
+  - guestPort: 80
+    hostPort: 80
+
+# Set the in-VM hostname. Lima has no top-level `hostname:` field, so we use a
+# system-mode provisioning script. Runs once on first boot.
+provision:
+  - mode: system
+    script: |
+      #!/bin/bash
+      set -eu
+      hostnamectl set-hostname nginx-microservices
+      apt-get update -qq
+      apt-get install -y -qq make curl

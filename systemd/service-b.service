@@ -1,0 +1,26 @@
+[Unit]
+Description=Nginx Gateway Microservices — Service B (HTTP :3002)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=microsvc
+Group=microsvc
+WorkingDirectory=/opt/nginx-gateway-microservices/services/service-b
+Environment=PORT=3002
+Environment=SERVICE_C_URL=http://service-c.internal:3003
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node index.js
+Restart=on-failure
+RestartSec=3s
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=service-b
+
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target
