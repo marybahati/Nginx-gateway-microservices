@@ -20,13 +20,16 @@ health:  ## Print system + service snapshot.
 	./healthcheck.sh
 
 start:  ## Start all microservices and nginx.
-	sudo systemctl start $(SERVICES) nginx
+	sudo systemctl start service-b service-c
+	sudo systemctl start service-a
+	sudo systemctl start nginx
 
 stop:  ## Stop nginx and all microservices.
-	sudo systemctl stop nginx $(SERVICES)
+	sudo systemctl stop nginx service-a service-b service-c
 
 restart:  ## Restart all microservices and reload nginx.
-	sudo systemctl restart $(SERVICES)
+	sudo systemctl restart service-b service-c
+	sudo systemctl restart service-a
 	sudo nginx -t && sudo systemctl reload nginx
 
 status:  ## Show systemctl status for nginx and all microservices.
@@ -53,6 +56,6 @@ test:  ## Run all validation commands from the API contract.
 	@echo "All validation commands succeeded."
 
 lint:  ## Syntax-check shell scripts.
-	@set -e; for f in install.sh uninstall.sh healthcheck.sh; do \
+	@set -e; for f in install.sh uninstall.sh healthcheck.sh scripts/*.sh; do \
 	  echo "  bash -n $$f"; bash -n "$$f"; \
 	done; echo "  ok"

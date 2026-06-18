@@ -36,6 +36,10 @@ nginx -t && systemctl reload nginx || true
 log "Removing service discovery entries"
 sed -i "/nginx-gateway-microservices/d" /etc/hosts 2>/dev/null || true
 
+log "Resetting firewall rules"
+ufw --force disable >/dev/null 2>&1 || true
+ufw --force reset >/dev/null 2>&1 || true
+
 log "Removing $LAB_HOME"
 rm -rf "$LAB_HOME"
 

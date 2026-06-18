@@ -42,7 +42,7 @@ install_packages() {
   log "Installing nginx, Node.js, and utilities"
   DEBIAN_FRONTEND=noninteractive apt-get update -qq
   DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
-    nginx nodejs npm curl jq make rsync
+    nginx nodejs npm curl jq make rsync ufw
 
   if ! command -v node >/dev/null 2>&1 && command -v nodejs >/dev/null 2>&1; then
     log "Linking nodejs → node"
@@ -73,6 +73,7 @@ install_app() {
   done
 
   chown -R "$LAB_USER:$LAB_USER" "$LAB_HOME"
+  chmod +x "$LAB_HOME/scripts/"*.sh
 }
 
 configure_service_discovery() {
@@ -83,6 +84,19 @@ configure_service_discovery() {
     sed -i "/${marker}/d" /etc/hosts
   fi
   printf '%s  # %s\n' "$entry" "$marker" >> /etc/hosts
+}
+
+configure_firewall() {
+  log "Configuring firewall (ufw) — block direct access to app ports"
+  ufw --force reset >/dev/null 2>&1 || true
+  ufw default deny incoming
+  ufw default allow outgoing
+  ufw allow OpenSSH
+  ufw allow 80/tcp comment 'nginx-gateway-public'
+  ufw deny 3001/tcp comment 'internal-service-a'
+  ufw deny 3002/tcp comment 'internal-service-b'
+  ufw deny 3003/tcp comment 'internal-service-c'
+  ufw --force enable
 }
 
 install_nginx() {
@@ -111,11 +125,14 @@ install_units() {
 }
 
 start_services() {
-  for svc in "${SERVICES[@]}"; do
+  for svc in service-b service-c; do
     log "Enabling + starting $svc"
     systemctl enable "$svc"
     systemctl restart "$svc"
   done
+  log "Enabling + starting service-a (waits for B + C health)"
+  systemctl enable service-a
+  systemctl restart service-a
 }
 
 print_status() {
@@ -136,6 +153,7 @@ main() {
   ensure_user
   install_app
   configure_service_discovery
+  configure_firewall
   install_units
   start_services
   install_nginx

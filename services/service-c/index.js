@@ -2,6 +2,7 @@ const express = require("express");
 const { log } = require("../../shared/logger");
 
 const PORT = Number(process.env.PORT) || 3003;
+const BIND_HOST = process.env.BIND_HOST || "127.0.0.1";
 const SERVICE_NAME = "service-c";
 const SERVICE_A_CALLBACK_URL =
   process.env.SERVICE_A_CALLBACK_URL || "http://service-a.internal:3001";
@@ -105,4 +106,4 @@ app.use((req, res) => {
   res.status(404).json({ error: "Not Found" });
 });
 
-app.listen(PORT);
+app.listen(PORT, BIND_HOST);

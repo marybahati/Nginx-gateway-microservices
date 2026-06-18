@@ -9,6 +9,7 @@ User=microsvc
 Group=microsvc
 WorkingDirectory=/opt/nginx-gateway-microservices/services/service-c
 Environment=PORT=3003
+Environment=BIND_HOST=127.0.0.1
 Environment=SERVICE_A_CALLBACK_URL=http://service-a.internal:3001
 Environment=NODE_ENV=production
 ExecStart=/usr/bin/node index.js

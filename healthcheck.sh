@@ -41,6 +41,24 @@ else
   netstat -tulnp 2>/dev/null | grep -E ':(80|3001|3002|3003)\s' | sed 's/^/  /' || true
 fi
 
+section "Network security (internal ports)"
+PUBLIC_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
+if [[ -n "$PUBLIC_IP" ]]; then
+  for port in 3002 3003; do
+    if curl -sf --max-time 2 "http://${PUBLIC_IP}:${port}/health" >/dev/null 2>&1; then
+      printf '  port %s via %s  EXPOSED (should be blocked)\n' "$port" "$PUBLIC_IP"
+    else
+      printf '  port %s via %s  blocked (expected)\n' "$port" "$PUBLIC_IP"
+    fi
+  done
+else
+  echo "  (could not determine public IP — run curl http://<vm-ip>:3002/health manually)"
+fi
+
+if command -v ufw >/dev/null 2>&1; then
+  ufw status 2>/dev/null | sed 's/^/  /' || true
+fi
+
 section "API smoke tests"
 for url in \
   "http://localhost/service-a/health" \
