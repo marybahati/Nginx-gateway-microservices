@@ -53,6 +53,16 @@ The system demonstrates operational patterns used in production:
 
 `Client → Nginx → Service A → Service B → Service C → Service A (callback)`
 
+A user hits `GET /service-a/greet-service-b` via Nginx. Service A calls B, B forwards to C, and C callbacks to A.
+
+| Step | Endpoint | What happens |
+|---|---|---|
+| 1 | `GET /service-a/greet-service-b` (via Nginx) | User starts the full flow |
+| 2 | A → `service-b.internal:3002/greet` | Service A calls Service B |
+| 3 | B → `service-c.internal:3003/greet-c` | Service B forwards to Service C |
+| 4 | C → `service-a.internal:3001/greeting-rcvd` | Service C callbacks to Service A |
+| 5 | Response to client | Service A returns success |
+
 The same `X-Request-ID` is propagated through every hop. Service A generates a UUID when the header is missing.
 
 ## Installation
@@ -470,7 +480,7 @@ sudo ./uninstall.sh
 |---|---|---|
 | GET | `/health` | `{ "service": "service-a", "status": "healthy", "port": 3001, "message": "..." }` |
 | GET | `/greet-service-b` | `{ "request_id": "...", "status": "success", "message": "Request completed successfully" }` |
-| POST | `/greeting-rcvd` | `{ "status": "received" }` — callback body from Service C |
+| POST | `/greeting-rcvd` | `{ "status": "received" }` — callback from Service C |
 
 ### Service B (`service-b`, port 3002, internal)
 
