@@ -314,19 +314,26 @@ Service A depends on Service B and Service C.
 
 | Requirement | Implementation |
 |---|---|
-| A does not start before B | `After=service-b.service` + `Requires=service-b.service` |
-| A does not start before C | `After=service-c.service` + `Requires=service-c.service` |
-| A not operational until deps ready | `ExecStartPre=scripts/wait-for-deps.sh` polls `/health` on B and C |
+| A starts after B and C | `After=service-b.service service-c.service` |
+| A stops if B or C stops | `Requires=service-b.service service-c.service` |
+| A waits until B/C are healthy | `ExecStartPre=wait-for-deps.sh` polls `/health` |
 
-Boot order: `service-b` → `service-c` → `service-a` (health wait) → `nginx`.
+Boot order: `service-b` → `service-c` → `service-a` → `nginx`.
 
-If an instructor stops Service B:
+If an instructor stops service B:
+**Stopping B also stops A:** `Requires=` tells systemd that A cannot run without B/C. Stopping B stops A too.
+
+**Recovery:** starting B alone is not enough — A must be started again as well.
 
 ```bash
 sudo systemctl stop service-b
-curl http://localhost/service-a/greet-service-b   # returns 500/504
-journalctl -u service-a -n 20                     # shows request_failed
-sudo systemctl start service-b                    # recovery
+systemctl is-active service-a service-b    # both inactive
+
+curl http://localhost/service-a/greet-service-b   # 502 (A is down)
+
+sudo systemctl start service-b service-a            # start both
+curl http://localhost/service-a/greet-service-b   # success
+journalctl -u service-a -n 10                       # shows recovery
 ```
 
 ## Request tracing
@@ -453,11 +460,12 @@ curl -i http://localhost/service-a/health   # expect 200
 ### Inter-service communication failures
 
 ```bash
-# Stop B, trigger flow, check A's logs
+# Stop B, trigger flow, check logs
 sudo systemctl stop service-b
+curl http://localhost/service-a/greet-service-b   # 502 — A stopped too (Requires=)
+sudo systemctl start service-b service-a          # recovery needs both
 curl http://localhost/service-a/greet-service-b
 journalctl -u service-a -n 10
-sudo systemctl start service-b
 ```
 
 ## Common operations
