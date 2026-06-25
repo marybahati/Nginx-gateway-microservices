@@ -122,9 +122,27 @@ A simple health check (`GET /service-a/health`) follows steps 1–2 only and ret
 
 - Listens on container port **80**; Docker maps it to host **8080**.
 - **Only** `location /service-a/` is proxied — all other paths return **404** (including `/service-b/` and `/service-c/`).
-- Upstream target: `service-a:3001` (Compose DNS, not `localhost`).
+- Upstream target: `service-a:3001` via Docker embedded DNS (`127.0.0.11`), re-resolved every 10s.
 - Injects `X-Request-ID`: uses the client header if present, otherwise Nginx generates one via `$request_id`.
 - Emits structured JSON access logs to **stdout** for `docker compose logs nginx`.
+
+**Nginx upstream DNS caching (Docker).** By default, Nginx resolves upstream hostnames once at startup and keeps that IP. When a container restarts, Docker assigns a new IP — Nginx may still connect to the old address (`connect() failed (111: Connection refused)` in `docker compose logs nginx` → **502 Bad Gateway**). `nginx/nginx-docker.conf` avoids this with:
+
+```nginx
+resolver 127.0.0.11 valid=10s ipv6=off;
+
+upstream service_a {
+    zone service_a 64k;
+    server service-a:3001 resolve;
+}
+```
+
+After pulling this config, run `docker compose restart nginx` once. Node.js services use `fetch()` and resolve peers on each request — only Nginx needed this fix.
+
+| Symptom | Likely cause |
+|---|---|
+| **502** after container restart | Nginx hitting stale `service-a` IP, or service-a not running |
+| **500** while B is down | Expected — Nginx reached A; A could not reach B |
 
 #### Service A (orchestrator)
 
@@ -159,7 +177,7 @@ Inside containers, peers are reached by **Compose service name** — never `loca
 | B → C | `service-c` | `http://service-c:3003` |
 | C → A (callback) | `service-a` | `http://service-a:3001` |
 
-Docker's embedded DNS on the `gateway` network maps each name to the container's current IP. URLs are set via environment variables in `docker-compose.yml` and read at application startup.
+Docker's embedded DNS on the `gateway` network maps each name to the container's current IP. Nginx uses `resolver 127.0.0.11` so it picks up new IPs after container restarts. Node.js `fetch` in the services resolves hostnames on each request.
 
 #### Request tracing
 

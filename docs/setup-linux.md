@@ -117,7 +117,7 @@ curl -i http://localhost:8080/service-a/greet-service-b
 | Build fails on `npm install` / `npm ci` | Docker build cannot reach `registry.npmjs.org` (DNS, firewall, proxy, or no outbound HTTPS) | See [Build fails during npm](#build-fails-during-npm) below |
 | `port 8080 already in use` | Another process on 8080 | Change host port in `docker-compose.yml` |
 | `service-a` keeps restarting | Dependency wait failed | `docker compose logs service-a service-b service-c` |
-| Nginx 502 | Service A not ready | `docker compose ps`; check logs |
+| Nginx 502 | Stale upstream IP (nginx DNS cache) or service-a not ready | `docker compose ps`; `docker compose logs nginx` (look for `Connection refused`); `docker compose restart nginx` after config update |
 
 ### Build fails during npm
 

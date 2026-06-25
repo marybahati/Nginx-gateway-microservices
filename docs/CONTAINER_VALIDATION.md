@@ -201,7 +201,9 @@ HTTP/1.1 200 OK
 {"request_id":"recover-001","status":"success","message":"Request completed successfully"}
 ```
 
-Unlike a systemd `Requires=` coupling, stopping Service B in Docker does **not** stop Service A. Service A stays running and returns a clear 500 error until B is restarted.
+Unlike a systemd `Requires=` coupling, stopping Service B in Docker does **not** stop Service A. Service A stays running and returns a clear **500** error until B is restarted.
+
+**If you see 502 instead of 500** after stopping/starting containers, Nginx may be using a stale `service-a` IP (classic Docker + Nginx DNS caching). Check `docker compose logs nginx` for `connect() failed (111: Connection refused)`. The repo config uses `resolver 127.0.0.11` and `server … resolve` in `nginx/nginx-docker.conf` so Nginx re-resolves `service-a` every ~10s. After updating that file, run `docker compose restart nginx` once, then confirm all services are up with `docker compose ps`.
 
 ---
 

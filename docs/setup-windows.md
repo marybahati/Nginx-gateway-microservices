@@ -118,4 +118,4 @@ curl.exe -i http://localhost:8080/service-a/greet-service-b
 | `Docker Desktop is unable to start` | WSL2 or Hyper-V not enabled | Enable WSL2: `wsl --install`; restart |
 | `port 8080 already in use` | Another process on 8080 | Change host port in `docker-compose.yml` |
 | `service-a` keeps restarting | B or C not healthy | `docker compose logs service-a` |
-| Nginx 502 | Service A not ready | `docker compose ps` |
+| Nginx 502 | Stale upstream IP (nginx DNS cache) or service-a not ready | `docker compose ps`; `docker compose logs nginx` (look for `Connection refused`); `docker compose restart nginx` after config update |

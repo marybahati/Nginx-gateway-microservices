@@ -104,5 +104,5 @@ curl -i http://localhost:8080/service-a/greet-service-b
 | `Cannot connect to the Docker daemon` | Docker Desktop not running | `open -a Docker` and wait for it to start |
 | `port 8080 already in use` | Another process on 8080 | Change the host port in `docker-compose.yml` (e.g. `"8081:80"`) |
 | `service-a` keeps restarting | B or C not healthy yet | `docker compose logs service-a`; wait and retry |
-| Nginx 502 | Service A not ready | `docker compose ps`; `docker compose logs service-a` |
+| Nginx 502 | Stale upstream IP (nginx DNS cache) or service-a not ready | `docker compose ps`; `docker compose logs nginx` (look for `Connection refused`); `docker compose restart nginx` after config update |
 | `curl localhost:8080` fails | Containers not up | `docker compose up --build -d` |
