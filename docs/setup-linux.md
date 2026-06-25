@@ -76,8 +76,8 @@ curl -i --connect-timeout 3 http://localhost:3002/health
 curl -i --connect-timeout 3 http://localhost:3003/health
 
 # Internal discovery
-docker compose exec service-a curl -i http://service-b:3002/health
-docker compose exec service-b curl -i http://service-c:3003/health
+docker compose exec service-a node -e "fetch('http://service-b:3002/health').then(r=>r.json()).then(console.log)"
+docker compose exec service-b node -e "fetch('http://service-c:3003/health').then(r=>r.json()).then(console.log)"
 
 # Trace one request
 curl -i http://localhost:8080/service-a/greet-service-b -H "X-Request-ID: demo-container-001"
@@ -114,6 +114,7 @@ curl -i http://localhost:8080/service-a/greet-service-b
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | `permission denied` on docker | User not in `docker` group | `sudo usermod -aG docker $USER && newgrp docker` |
+| Build fails on `apk add` | Docker build cannot reach Alpine package mirrors (DNS/firewall/proxy) | Images no longer use `apk`; run `docker compose build --no-cache` after pulling latest code. If `npm install` fails, check outbound HTTPS and DNS in `/etc/docker/daemon.json` |
 | `port 8080 already in use` | Another process on 8080 | Change host port in `docker-compose.yml` |
 | `service-a` keeps restarting | Dependency wait failed | `docker compose logs service-a service-b service-c` |
 | Nginx 502 | Service A not ready | `docker compose ps`; check logs |

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # wait-for-deps.sh — Block Service A startup until B and C health endpoints respond.
-# Used as a pre-start gate in Docker Compose (service-a container command).
+# Docker Compose uses scripts/wait-for-deps.mjs instead (no curl/bash required).
 #
 set -Eeuo pipefail
 

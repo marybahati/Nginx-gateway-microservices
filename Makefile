@@ -47,8 +47,8 @@ test:  ## Run all Docker validation checks (full 7-test suite).
 	@curl -sf --connect-timeout 3 http://localhost:3003/health && echo "UNEXPECTED: C is exposed" && exit 1 || echo "OK: connection refused or timed out"
 	@echo ""
 	@echo "=== [5/7] Internal discovery ==="
-	@$(COMPOSE) exec -T service-a curl -sf http://service-b:3002/health | python3 -m json.tool
-	@$(COMPOSE) exec -T service-b curl -sf http://service-c:3003/health | python3 -m json.tool
+	@$(COMPOSE) exec -T service-a node -e "fetch('http://service-b:3002/health').then(r=>r.json()).then(d=>console.log(JSON.stringify(d,null,2)))"
+	@$(COMPOSE) exec -T service-b node -e "fetch('http://service-c:3003/health').then(r=>r.json()).then(d=>console.log(JSON.stringify(d,null,2)))"
 	@echo ""
 	@echo "=== [6/7] Request tracing ==="
 	@curl -sf http://localhost:8080/service-a/greet-service-b -H "X-Request-ID: make-docker-test-trace" | python3 -m json.tool
@@ -76,4 +76,4 @@ docker-test: test  ## Alias for make test.
 lint:  ## Syntax-check shell scripts.
 	@set -e; for f in scripts/*.sh; do \
 	  echo "  bash -n $$f"; bash -n "$$f"; \
-	done; echo "  ok"
+	done; echo "  node --check scripts/wait-for-deps.mjs"; node --check scripts/wait-for-deps.mjs; echo "  ok"

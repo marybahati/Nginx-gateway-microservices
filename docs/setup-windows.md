@@ -79,8 +79,8 @@ curl.exe -i --connect-timeout 3 http://localhost:3002/health
 curl.exe -i --connect-timeout 3 http://localhost:3003/health
 
 # Internal discovery
-docker compose exec service-a curl -i http://service-b:3002/health
-docker compose exec service-b curl -i http://service-c:3003/health
+docker compose exec service-a node -e "fetch('http://service-b:3002/health').then(r=>r.json()).then(console.log)"
+docker compose exec service-b node -e "fetch('http://service-c:3003/health').then(r=>r.json()).then(console.log)"
 
 # Trace one request
 curl.exe -i http://localhost:8080/service-a/greet-service-b -H "X-Request-ID: demo-container-001"

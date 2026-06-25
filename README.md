@@ -245,7 +245,7 @@ docker compose ps
 
 Expected: four containers running — `nginx`, `service-a`, `service-b`, `service-c`.
 
-Each Node.js service has its own `Dockerfile` under `services/<name>/`. Service A’s image includes `curl` and `bash` for the dependency health wait; B and C use a minimal Node-only image.
+Each Node.js service has its own `Dockerfile` under `services/<name>/`. Images use the stock `node:20-alpine` base with **no extra OS packages** (`apk` is not required), which avoids Alpine package-index failures on restricted Linux networks during build.
 
 ### Test the public route
 
@@ -272,8 +272,8 @@ curl --connect-timeout 3 http://localhost:3003/health     # connection refused
 From inside the network, discovery works:
 
 ```bash
-docker compose exec service-a curl http://service-b:3002/health
-docker compose exec service-b curl http://service-c:3003/health
+docker compose exec service-a node -e "fetch('http://service-b:3002/health').then(r=>r.json()).then(console.log)"
+docker compose exec service-b node -e "fetch('http://service-c:3003/health').then(r=>r.json()).then(console.log)"
 ```
 
 Nginx does not proxy B or C:
@@ -367,7 +367,8 @@ Full validation evidence: [docs/CONTAINER_VALIDATION.md](docs/CONTAINER_VALIDATI
 ├── nginx/
 │   └── nginx-docker.conf     # Nginx config (public → Service A only)
 ├── scripts/
-│   └── wait-for-deps.sh      # Service A dependency health wait
+│   ├── wait-for-deps.mjs     # Service A dependency health wait (Docker)
+│   └── wait-for-deps.sh      # Shell variant (optional reference)
 ├── shared/logger.js
 └── services/
     ├── service-a/
