@@ -5,7 +5,7 @@ const PORT = Number(process.env.PORT) || 3003;
 const BIND_HOST = process.env.BIND_HOST || "127.0.0.1";
 const SERVICE_NAME = "service-c";
 const SERVICE_A_CALLBACK_URL =
-  process.env.SERVICE_A_CALLBACK_URL || "http://service-a.internal:3001";
+  process.env.SERVICE_A_CALLBACK_URL || "http://service-a:3001";
 
 const app = express();
 

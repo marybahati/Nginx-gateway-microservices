@@ -4,7 +4,7 @@ const { log } = require("../../shared/logger");
 const PORT = Number(process.env.PORT) || 3002;
 const BIND_HOST = process.env.BIND_HOST || "127.0.0.1";
 const SERVICE_NAME = "service-b";
-const SERVICE_C_URL = process.env.SERVICE_C_URL || "http://service-c.internal:3003";
+const SERVICE_C_URL = process.env.SERVICE_C_URL || "http://service-c:3003";
 
 const app = express();
 

@@ -5,7 +5,7 @@ const { log } = require("../../shared/logger");
 const PORT = Number(process.env.PORT) || 3001;
 const BIND_HOST = process.env.BIND_HOST || "127.0.0.1";
 const SERVICE_NAME = "service-a";
-const SERVICE_B_URL = process.env.SERVICE_B_URL || "http://service-b.internal:3002";
+const SERVICE_B_URL = process.env.SERVICE_B_URL || "http://service-b:3002";
 const CALLBACK_TIMEOUT_MS = Number(process.env.CALLBACK_TIMEOUT_MS) || 30000;
 
 const app = express();

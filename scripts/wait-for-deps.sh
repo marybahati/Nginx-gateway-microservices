@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 #
 # wait-for-deps.sh — Block Service A startup until B and C health endpoints respond.
-# Used as ExecStartPre in service-a.service.
+# Used as a pre-start gate in Docker Compose (service-a container command).
 #
 set -Eeuo pipefail
 
 DEPS=(
-  "http://service-b.internal:3002/health"
-  "http://service-c.internal:3003/health"
+  "${SERVICE_B_HEALTH_URL:-http://service-b:3002/health}"
+  "${SERVICE_C_HEALTH_URL:-http://service-c:3003/health}"
 )
 
 MAX_ATTEMPTS="${WAIT_FOR_DEPS_ATTEMPTS:-30}"
