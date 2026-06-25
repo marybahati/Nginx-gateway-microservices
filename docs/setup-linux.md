@@ -38,6 +38,8 @@ newgrp docker
 
 Official install guide (all distros): https://docs.docker.com/engine/install/
 
+Use **Docker Engine 20.10+** with the **Compose V2 plugin** (`docker compose`, not legacy `docker-compose` v1). On Ubuntu/Debian, `docker-compose-v2` satisfies this.
+
 ## 3. Clone the repository
 
 ```bash

@@ -230,6 +230,8 @@ docker compose version
 docker info    # should not error
 ```
 
+**Supported versions:** Use **Docker Compose V2** (`docker compose`, not the legacy `docker-compose` v1 command). Docker Engine **20.10+** and Compose plugin **2.1+** are recommended — current [Docker Desktop](https://docs.docker.com/desktop/) (macOS/Windows) or [Docker Engine](https://docs.docker.com/engine/install/) (Linux) installs satisfy this. The stack uses `depends_on` with `condition: service_healthy`, which requires Compose V2.1 or newer.
+
 You also need **Git** to clone the repository. Node.js, Nginx, and a Linux VM are **not** required on the host.
 
 ### Start the system

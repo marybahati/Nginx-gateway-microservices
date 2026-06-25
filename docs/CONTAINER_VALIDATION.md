@@ -7,7 +7,7 @@ Validation evidence for the Docker Compose migration. All tests were run on macO
 
 ## Prerequisites
 
-**Docker must be installed and running locally** before running these tests. Setup guides:
+**Docker must be installed and running locally** before running these tests. Use Docker Compose V2 (`docker compose`); Docker Engine 20.10+ and Compose plugin 2.1+ recommended.
 
 | Platform | Guide |
 |---|---|

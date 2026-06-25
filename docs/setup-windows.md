@@ -24,10 +24,12 @@ winget install Docker.DockerDesktop
 
 Restart if prompted, then open Docker Desktop and wait until it reports "Engine running".
 
-```powershell
+```bash
 docker --version
 docker compose version
 ```
+
+Use **Docker Desktop 4.x or newer** (includes Docker Compose V2). Avoid the legacy `docker-compose` v1-only install.
 
 Download: [Docker Desktop for Windows](https://docs.docker.com/desktop/setup/install/windows-install/)
 

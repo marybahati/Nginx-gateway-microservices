@@ -23,6 +23,8 @@ docker --version
 docker compose version
 ```
 
+Use **Docker Desktop 4.x or newer** (includes Docker Compose V2). Avoid the legacy `docker-compose` v1-only install.
+
 If you don't have Homebrew: download [Docker Desktop for Mac](https://docs.docker.com/desktop/setup/install/mac-install/).
 
 ## 3. Clone the repository
