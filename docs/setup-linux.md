@@ -121,7 +121,7 @@ curl -i http://localhost:8080/service-a/greet-service-b
 
 ### Build fails during npm
 
-The build step `RUN npm ci --omit=dev` needs **outbound HTTPS** from inside the Docker build environment to `registry.npmjs.org`.
+The build step `RUN npm ci` needs **outbound HTTPS** from inside the Docker build environment to `registry.npmjs.org`. It installs packages listed under `dependencies` in each service's `package.json` (locked by `package-lock.json`).
 
 **1. See the real error** (npm hides details in short summaries):
 

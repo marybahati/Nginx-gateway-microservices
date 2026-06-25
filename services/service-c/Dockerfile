@@ -5,10 +5,11 @@ WORKDIR /app
 COPY shared/ /app/shared/
 COPY services/service-c/package.json services/service-c/package-lock.json /app/services/service-c/
 WORKDIR /app/services/service-c
+# Install runtime packages from package.json "dependencies" (express, …)
 RUN npm config set fetch-retries 5 \
  && npm config set fetch-retry-mintimeout 20000 \
  && npm config set fetch-retry-maxtimeout 120000 \
- && npm ci --omit=dev
+ && npm ci
 
 COPY services/service-c/index.js /app/services/service-c/
 

@@ -247,6 +247,8 @@ Expected: four containers running — `nginx`, `service-a`, `service-b`, `servic
 
 Each Node.js service has its own `Dockerfile` under `services/<name>/`. Images use the stock `node:20-alpine` base with **no extra OS packages** (`apk` is not required), which avoids Alpine package-index failures on restricted Linux networks during build.
 
+Each Dockerfile runs `npm ci` against that service's `package.json` **`dependencies`** (via `package-lock.json`) — e.g. `express`, `uuid`. There are no `devDependencies` in this project.
+
 ### Test the public route
 
 ```bash
