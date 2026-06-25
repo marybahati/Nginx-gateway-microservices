@@ -8,7 +8,7 @@ Goal: run the full Nginx gateway microservices stack on your Linux machine using
 
 | Resource | Minimum |
 |---|---|
-| Docker | **Required** — Docker Engine + Compose plugin (see §2 below) |
+| Docker | **Required** — Docker Engine + Compose plugin (see below) |
 | CPU | 2 cores |
 | RAM | 4 GB free |
 | Disk | 5 GB free for images |

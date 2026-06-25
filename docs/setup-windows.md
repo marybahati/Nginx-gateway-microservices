@@ -8,7 +8,7 @@ Goal: run the full Nginx gateway microservices stack on Windows using Docker Com
 
 | Resource | Minimum |
 |---|---|
-| Docker | **Required** — [Docker Desktop for Windows](https://docs.docker.com/desktop/setup/install/windows-install/) (see §2 below) |
+| Docker | **Required** — [Docker Desktop for Windows](https://docs.docker.com/desktop/setup/install/windows-install/) (see below) |
 | CPU | 2 cores (virtualization enabled in BIOS) |
 | RAM | 4 GB free |
 | Disk | 5 GB free for images |

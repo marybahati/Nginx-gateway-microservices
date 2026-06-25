@@ -8,7 +8,7 @@ Goal: run the full Nginx gateway microservices stack on your Mac using Docker Co
 
 | Resource | Minimum |
 |---|---|
-| Docker | **Required** — [Docker Desktop for Mac](https://docs.docker.com/desktop/setup/install/mac-install/) (see §2 below) |
+| Docker | **Required** — [Docker Desktop for Mac](https://docs.docker.com/desktop/setup/install/mac-install/) (see below) |
 | CPU | 2 cores |
 | RAM | 4 GB free |
 | Disk | 5 GB free for images |
