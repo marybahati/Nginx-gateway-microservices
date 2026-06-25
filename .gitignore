@@ -1,4 +1,8 @@
-# Generated logs that may show up if a person runs scripts in the repo dir
+# Dependencies (installed locally or in Docker — never commit)
+node_modules/
+**/node_modules/
+
+# Generated logs
 *.log
 *.log.*
 
@@ -9,5 +13,5 @@
 *.swp
 *~
 
-# Local Lima state (if a person accidentally creates it in the repo)
+# Local Lima state (if accidentally created in the repo)
 .lima/

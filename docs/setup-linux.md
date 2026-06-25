@@ -114,7 +114,59 @@ curl -i http://localhost:8080/service-a/greet-service-b
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | `permission denied` on docker | User not in `docker` group | `sudo usermod -aG docker $USER && newgrp docker` |
-| Build fails on `apk add` | Docker build cannot reach Alpine package mirrors (DNS/firewall/proxy) | Images no longer use `apk`; run `docker compose build --no-cache` after pulling latest code. If `npm install` fails, check outbound HTTPS and DNS in `/etc/docker/daemon.json` |
+| Build fails on `npm install` / `npm ci` | Docker build cannot reach `registry.npmjs.org` (DNS, firewall, proxy, or no outbound HTTPS) | See [Build fails during npm](#build-fails-during-npm) below |
 | `port 8080 already in use` | Another process on 8080 | Change host port in `docker-compose.yml` |
 | `service-a` keeps restarting | Dependency wait failed | `docker compose logs service-a service-b service-c` |
 | Nginx 502 | Service A not ready | `docker compose ps`; check logs |
+
+### Build fails during npm
+
+The build step `RUN npm ci --omit=dev` needs **outbound HTTPS** from inside the Docker build environment to `registry.npmjs.org`.
+
+**1. See the real error** (npm hides details in short summaries):
+
+```bash
+docker compose build service-b --progress=plain --no-cache 2>&1 | tail -50
+```
+
+**2. Test network from a throwaway container:**
+
+```bash
+docker run --rm node:20-alpine wget -qO- https://registry.npmjs.org/express/latest
+```
+
+If that fails, Docker on the host cannot reach npm during builds.
+
+**3. Fix DNS** (common on Linux VMs and lab machines). Create or edit `/etc/docker/daemon.json`:
+
+```json
+{
+  "dns": ["8.8.8.8", "8.8.4.4"]
+}
+```
+
+Then restart Docker:
+
+```bash
+sudo systemctl restart docker
+```
+
+**4. Build using the host network** (if your lab blocks bridge NAT but allows host egress):
+
+```bash
+DOCKER_BUILDKIT=1 docker compose build --build-arg BUILDKIT_INLINE_CACHE=1
+# or per-service:
+docker build --network=host -f services/service-b/Dockerfile .
+```
+
+**5. HTTP proxy** (corporate networks). Set build-time proxy env vars:
+
+```bash
+export HTTP_PROXY=http://your-proxy:port
+export HTTPS_PROXY=http://your-proxy:port
+docker compose build --no-cache
+```
+
+**6. Run on the host, not inside a nested VM.** If Docker works on the physical machine, clone the repo on the host and run `docker compose up` there — you do not need a separate Linux VM for this project.
+
+**7. Pull latest code.** Dockerfiles use committed `package-lock.json` files and `npm ci` for reproducible installs after `git pull`.
