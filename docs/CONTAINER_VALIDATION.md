@@ -27,13 +27,7 @@ Each application service uses `restart: unless-stopped`. Containers restart auto
 docker compose up --build -d
 ```
 
-```
- Network nginx-gateway-microservices_gateway  Created
- Container nginx-gateway-microservices-service-b-1  Started
- Container nginx-gateway-microservices-service-c-1  Started
- Container nginx-gateway-microservices-service-a-1  Started
- Container nginx-gateway-microservices-nginx-1  Started
-```
+<img width="723" height="543" alt="image" src="https://github.com/user-attachments/assets/281a52ad-1960-4627-a588-90bd2d9a4e88" />
 
 ---
 
@@ -43,13 +37,8 @@ docker compose up --build -d
 docker compose ps
 ```
 
-```
-NAME                                      IMAGE                                   COMMAND                  SERVICE     STATUS          PORTS
-nginx-gateway-microservices-nginx-1       nginx:1.27-alpine                       "/docker-entrypoint.…"   nginx       Up              0.0.0.0:8080->80/tcp
-nginx-gateway-microservices-service-a-1   nginx-gateway-microservices-service-a   "docker-entrypoint.s…"   service-a   Up
-nginx-gateway-microservices-service-b-1   nginx-gateway-microservices-service-b   "docker-entrypoint.s…"   service-b   Up
-nginx-gateway-microservices-service-c-1   nginx-gateway-microservices-service-c   "docker-entrypoint.s…"   service-c   Up
-```
+<img width="828" height="332" alt="image" src="https://github.com/user-attachments/assets/a97ce472-f2eb-473e-ade0-2f25fa7bb057" />
+
 
 All four services are running. Only Nginx publishes a host port (`8080:80`).
 
@@ -61,13 +50,8 @@ All four services are running. Only Nginx publishes a host port (`8080:80`).
 curl -i http://localhost:8080/service-a/health
 ```
 
-```
-HTTP/1.1 200 OK
-Server: nginx/1.27.5
-Content-Type: application/json; charset=utf-8
+<img width="827" height="296" alt="image" src="https://github.com/user-attachments/assets/74de8e60-9585-4b85-b8a1-bf71964ae17c" />
 
-{"service":"service-a","status":"healthy","port":3001,"message":"Hello service-a listening on 3001"}
-```
 
 Full flow:
 
@@ -75,12 +59,8 @@ Full flow:
 curl -i http://localhost:8080/service-a/greet-service-b
 ```
 
-```
-HTTP/1.1 200 OK
-Content-Type: application/json; charset=utf-8
+<img width="829" height="221" alt="image" src="https://github.com/user-attachments/assets/b53599bf-d4ac-4dd3-ac3b-b99b9fbf8b72" />
 
-{"request_id":"<uuid>","status":"success","message":"Request completed successfully"}
-```
 
 ---
 
@@ -93,10 +73,8 @@ curl -i --connect-timeout 3 http://localhost:3002/health
 curl -i --connect-timeout 3 http://localhost:3003/health
 ```
 
-```
-curl: (7) Failed to connect to localhost port 3002 after 0 ms: Couldn't connect to server
-curl: (7) Failed to connect to localhost port 3003 after 0 ms: Couldn't connect to server
-```
+<img width="850" height="204" alt="image" src="https://github.com/user-attachments/assets/720c239d-6743-484a-97e8-c3f9f21a4de4" />
+
 
 Connection refused — ports 3002 and 3003 are not published to the host.
 
@@ -106,6 +84,7 @@ Nginx also returns 404 for direct B/C routes:
 curl -i http://localhost:8080/service-b/health   # 404
 curl -i http://localhost:8080/service-c/health   # 404
 ```
+<img width="850" height="685" alt="image" src="https://github.com/user-attachments/assets/607e1b47-d92b-4cd9-8f53-37858e07fe89" />
 
 ---
 
@@ -118,13 +97,8 @@ docker compose exec service-a node -e "fetch('http://service-b:3002/health').the
 docker compose exec service-b node -e "fetch('http://service-c:3003/health').then(r=>r.json()).then(console.log)"
 ```
 
-```
-HTTP/1.1 200 OK
-{"service":"service-b","status":"healthy","port":3002,"message":"Hello service-b listening on 3002"}
+<img width="850" height="424" alt="image" src="https://github.com/user-attachments/assets/9265a2f8-4c09-45bb-9d5d-8058d5d5d1eb" />
 
-HTTP/1.1 200 OK
-{"service":"service-c","status":"healthy","port":3003,"message":"Hello service-c listening on 3003"}
-```
 
 Services communicate using Compose DNS names (`service-b`, `service-c`), not `localhost`.
 
@@ -139,24 +113,9 @@ curl -i http://localhost:8080/service-a/greet-service-b \
 docker compose logs | grep demo-container-001
 ```
 
-```
-HTTP/1.1 200 OK
-{"request_id":"demo-container-001","status":"success","message":"Request completed successfully"}
-```
-
 Log grep output (same request ID in all four services):
 
-```
-service-a-1  | {"timestamp":"...","service":"service-a","event":"request_received","request_id":"demo-container-001",...}
-service-a-1  | {"timestamp":"...","service":"service-a","event":"request_forwarded","request_id":"demo-container-001","target":"service-b",...}
-service-a-1  | {"timestamp":"...","service":"service-a","event":"callback_received","request_id":"demo-container-001","source_service":"service-c",...}
-service-a-1  | {"timestamp":"...","service":"service-a","event":"request_completed","request_id":"demo-container-001",...}
-service-b-1  | {"timestamp":"...","service":"service-b","event":"request_received","request_id":"demo-container-001","path":"/greet",...}
-service-b-1  | {"timestamp":"...","service":"service-b","event":"request_forwarded","request_id":"demo-container-001","target":"service-c",...}
-service-c-1  | {"timestamp":"...","service":"service-c","event":"request_received","request_id":"demo-container-001","path":"/greet-c",...}
-service-c-1  | {"timestamp":"...","service":"service-c","event":"callback_sent","request_id":"demo-container-001","target":"service-a",...}
-nginx-1      | {"timestamp":"...","request_id":"demo-container-001","method":"GET","path":"/service-a/greet-service-b","status":200,...}
-```
+<img width="1053" height="740" alt="image" src="https://github.com/user-attachments/assets/9ded9488-7793-44c8-a0d9-470a41a5a4fc" />
 
 ---
 
@@ -169,12 +128,6 @@ curl -i http://localhost:8080/service-a/greet-service-b \
   -H "X-Request-ID: fail-service-b-001"
 ```
 
-```
-HTTP/1.1 500 Internal Server Error
-Content-Type: application/json; charset=utf-8
-
-{"request_id":"fail-service-b-001","status":"error","message":"fetch failed"}
-```
 
 Service A logs the failure:
 
@@ -182,10 +135,8 @@ Service A logs the failure:
 docker compose logs service-a | grep fail-service-b-001
 ```
 
-```
-service-a-1  | {"timestamp":"...","service":"service-a","event":"request_received","request_id":"fail-service-b-001","path":"/greet-service-b",...}
-service-a-1  | {"timestamp":"...","service":"service-a","event":"request_failed","request_id":"fail-service-b-001","path":"/greet-service-b","status":500,"error":"fetch failed"}
-```
+<img width="1039" height="524" alt="image" src="https://github.com/user-attachments/assets/feba4c0b-bd7d-4f51-a9a5-bebbb29d391e" />
+
 
 **Recover:**
 
@@ -196,10 +147,8 @@ curl -i http://localhost:8080/service-a/greet-service-b \
   -H "X-Request-ID: recover-001"
 ```
 
-```
-HTTP/1.1 200 OK
-{"request_id":"recover-001","status":"success","message":"Request completed successfully"}
-```
+<img width="1056" height="400" alt="image" src="https://github.com/user-attachments/assets/c913d5cd-e3b2-4341-a9cf-9a68e4161eed" />
+
 
 Unlike a systemd `Requires=` coupling, stopping Service B in Docker does **not** stop Service A. Service A stays running and returns a clear **500** error until B is restarted.
 
@@ -215,31 +164,7 @@ Run all 7 checks in one command:
 make test
 ```
 
-```
-=== [1/7] Containers running ===
-OK: all four services running
-
-=== [2/7] Service A via Nginx (:8080) ===
-{ "service": "service-a", "status": "healthy", ... }
-
-=== [3/7] Service B not exposed from host ===
-OK: connection refused or timed out
-
-=== [4/7] Service C not exposed from host ===
-OK: connection refused or timed out
-
-=== [5/7] Internal discovery ===
-{ "service": "service-b", "status": "healthy", ... }
-{ "service": "service-c", "status": "healthy", ... }
-
-=== [6/7] Request tracing ===
-{ "request_id": "make-docker-test-trace", "status": "success", ... }
-OK: request ID found in logs
-
-=== [7/7] Stop Service B, observe failure, recover ===
-OK: request failed while B is down
-OK: failure logged by service-a
-{ "request_id": "make-recover-001", "status": "success", ... }
 
 All Docker validation commands succeeded.
-```
+
+<img width="1346" height="876" alt="image" src="https://github.com/user-attachments/assets/9d24dae3-a4e5-4a78-9104-1bbd3b16cb2f" />
