@@ -32,35 +32,43 @@ stop-service:  ## Stop one service (usage: make stop-service SVC=service-b).
 start-service:  ## Start one service (usage: make start-service SVC=service-b).
 	$(COMPOSE) start $(SVC)
 
-test:  ## Run all Docker validation checks (full 7-test suite).
-	@echo "=== [1/7] Containers running ==="
+test:  ## Run all Docker validation checks (full 8-test suite).
+	@echo "=== [1/8] Containers running ==="
 	@count=$$($(COMPOSE) ps --status running -q | wc -l | tr -d ' '); \
 	if [ "$$count" -eq 4 ]; then echo "OK: all four services running"; else echo "FAIL: expected 4 running containers, got $$count"; $(COMPOSE) ps; exit 1; fi
 	@echo ""
-	@echo "=== [2/7] Service A via Nginx (:8080) ==="
+	@echo "=== [2/8] Service A via Nginx (:8080) ==="
 	@curl -sf http://localhost:8080/service-a/health | python3 -m json.tool
 	@echo ""
-	@echo "=== [3/7] Service B not exposed from host ==="
+	@echo "=== [3/8] Service B not exposed from host ==="
 	@curl -sf --connect-timeout 3 http://localhost:3002/health && echo "UNEXPECTED: B is exposed" && exit 1 || echo "OK: connection refused or timed out"
 	@echo ""
-	@echo "=== [4/7] Service C not exposed from host ==="
+	@echo "=== [4/8] Service C not exposed from host ==="
 	@curl -sf --connect-timeout 3 http://localhost:3003/health && echo "UNEXPECTED: C is exposed" && exit 1 || echo "OK: connection refused or timed out"
 	@echo ""
-	@echo "=== [5/7] Internal discovery ==="
+	@echo "=== [5/8] Internal discovery ==="
 	@$(COMPOSE) exec -T service-a node -e "fetch('http://service-b:3002/health').then(r=>r.json()).then(d=>console.log(JSON.stringify(d,null,2)))"
 	@$(COMPOSE) exec -T service-b node -e "fetch('http://service-c:3003/health').then(r=>r.json()).then(d=>console.log(JSON.stringify(d,null,2)))"
 	@echo ""
-	@echo "=== [6/7] Request tracing ==="
+	@echo "=== [6/8] Request tracing ==="
 	@curl -sf http://localhost:8080/service-a/greet-service-b -H "X-Request-ID: make-docker-test-trace" | python3 -m json.tool
 	@$(COMPOSE) logs 2>&1 | grep -q make-docker-test-trace && echo "OK: request ID found in logs" || (echo "FAIL: request ID not found in logs" && exit 1)
 	@echo ""
-	@echo "=== [7/7] Stop Service B, observe failure, recover ==="
+	@echo "=== [7/8] Stop Service B, observe failure, recover ==="
 	@$(COMPOSE) stop service-b
 	@curl -sf http://localhost:8080/service-a/greet-service-b -H "X-Request-ID: make-fail-service-b" >/dev/null && echo "UNEXPECTED: request succeeded while B is down" && $(COMPOSE) start service-b && exit 1 || echo "OK: request failed while B is down"
 	@$(COMPOSE) logs service-a 2>&1 | grep -q make-fail-service-b && echo "OK: failure logged by service-a" || (echo "FAIL: failure not logged" && $(COMPOSE) start service-b && exit 1)
 	@$(COMPOSE) start service-b
 	@sleep 2
 	@curl -sf http://localhost:8080/service-a/greet-service-b -H "X-Request-ID: make-recover-001" | python3 -m json.tool
+	@echo ""
+	@echo "=== [8/8] Readiness endpoint ==="
+	@curl -sf http://localhost:8080/service-a/ready | python3 -m json.tool
+	@$(COMPOSE) stop service-b
+	@curl -sf http://localhost:8080/service-a/ready >/dev/null && echo "UNEXPECTED: ready returned 200 while B is down" && $(COMPOSE) start service-b && exit 1 || echo "OK: not_ready while B is down"
+	@$(COMPOSE) start service-b
+	@sleep 2
+	@curl -sf http://localhost:8080/service-a/ready | python3 -m json.tool
 	@echo ""
 	@echo "All Docker validation commands succeeded."
 

@@ -7,6 +7,7 @@ const SERVICE_NAME = "service-b";
 const SERVICE_C_URL = process.env.SERVICE_C_URL || "http://service-c:3003";
 
 const app = express();
+app.disable("x-powered-by");
 
 function getRequestId(req) {
   return req.headers["x-request-id"] || "unknown";
@@ -28,6 +29,18 @@ app.get("/health", (req, res) => {
     port: PORT,
     message: `Hello ${SERVICE_NAME} listening on ${PORT}`,
   });
+});
+
+app.get("/ready", (req, res) => {
+  const requestId = getRequestId(req);
+  log({
+    service: SERVICE_NAME,
+    event: "readiness_check",
+    request_id: requestId,
+    path: "/ready",
+    status: 200,
+  });
+  res.status(200).json({ service: SERVICE_NAME, status: "ready" });
 });
 
 app.get("/greet", async (req, res) => {

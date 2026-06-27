@@ -6,9 +6,12 @@ const PORT = Number(process.env.PORT) || 3001;
 const BIND_HOST = process.env.BIND_HOST || "127.0.0.1";
 const SERVICE_NAME = "service-a";
 const SERVICE_B_URL = process.env.SERVICE_B_URL || "http://service-b:3002";
+const SERVICE_B_HEALTH_URL = process.env.SERVICE_B_HEALTH_URL || "http://service-b:3002/health";
+const SERVICE_C_HEALTH_URL = process.env.SERVICE_C_HEALTH_URL || "http://service-c:3003/health";
 const CALLBACK_TIMEOUT_MS = Number(process.env.CALLBACK_TIMEOUT_MS) || 30000;
 
 const app = express();
+app.disable("x-powered-by");
 app.use(express.json());
 
 const pendingCallbacks = new Map();
@@ -48,6 +51,35 @@ app.get("/health", (req, res) => {
     port: PORT,
     message: `Hello ${SERVICE_NAME} listening on ${PORT}`,
   });
+});
+
+app.get("/ready", async (req, res) => {
+  const requestId = getRequestId(req);
+  try {
+    const [bRes, cRes] = await Promise.all([
+      fetch(SERVICE_B_HEALTH_URL),
+      fetch(SERVICE_C_HEALTH_URL),
+    ]);
+    if (!bRes.ok || !cRes.ok) throw new Error("dependency_unhealthy");
+    log({
+      service: SERVICE_NAME,
+      event: "readiness_check",
+      request_id: requestId,
+      path: "/ready",
+      status: 200,
+    });
+    res.status(200).json({ service: SERVICE_NAME, status: "ready" });
+  } catch (error) {
+    log({
+      service: SERVICE_NAME,
+      event: "readiness_check",
+      request_id: requestId,
+      path: "/ready",
+      status: 503,
+      error: error.message,
+    });
+    res.status(503).json({ service: SERVICE_NAME, status: "not_ready", error: error.message });
+  }
 });
 
 app.get("/greet-service-b", async (req, res) => {

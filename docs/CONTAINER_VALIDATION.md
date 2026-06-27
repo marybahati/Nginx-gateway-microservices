@@ -64,7 +64,57 @@ curl -i http://localhost:8080/service-a/greet-service-b
 
 ---
 
-## 4. Prove B and C are not directly exposed
+## 4. Test readiness endpoints
+
+Service A's `/ready` checks that both B and C are reachable before returning 200. B and C return 200 immediately (no upstream deps).
+
+```bash
+curl -i http://localhost:8080/service-a/ready
+```
+
+```
+HTTP/1.1 200 OK
+Content-Type: application/json; charset=utf-8
+
+{"service":"service-a","status":"ready"}
+```
+
+Verify B and C readiness from inside the network:
+
+```bash
+docker compose exec service-a node -e "fetch('http://service-b:3002/ready').then(r=>r.json()).then(console.log)"
+docker compose exec service-a node -e "fetch('http://service-c:3003/ready').then(r=>r.json()).then(console.log)"
+```
+
+```
+{"service":"service-b","status":"ready"}
+{"service":"service-c","status":"ready"}
+```
+
+**When a dependency is down** — stop B and hit service-a's `/ready`:
+
+```bash
+docker compose stop service-b
+
+curl -i http://localhost:8080/service-a/ready
+```
+
+```
+HTTP/1.1 503 Service Unavailable
+Content-Type: application/json; charset=utf-8
+
+{"service":"service-a","status":"not_ready","error":"dependency_unhealthy"}
+```
+
+**Recover:**
+
+```bash
+docker compose start service-b
+```
+
+---
+
+## 5. Prove B and C are not directly exposed
 
 From the host:
 
@@ -88,7 +138,7 @@ curl -i http://localhost:8080/service-c/health   # 404
 
 ---
 
-## 5. Prove internal service discovery works
+## 6. Prove internal service discovery works
 
 From inside the Docker Compose network:
 
@@ -104,7 +154,7 @@ Services communicate using Compose DNS names (`service-b`, `service-c`), not `lo
 
 ---
 
-## 6. Trace one request
+## 7. Trace one request
 
 ```bash
 curl -i http://localhost:8080/service-a/greet-service-b \
@@ -119,7 +169,7 @@ Log grep output (same request ID in all four services):
 
 ---
 
-## 7. Stop Service B and observe failure
+## 8. Stop Service B and observe failure
 
 ```bash
 docker compose stop service-b
@@ -158,12 +208,42 @@ Unlike a systemd `Requires=` coupling, stopping Service B in Docker does **not**
 
 ## Quick validation
 
-Run all 7 checks in one command:
+Run all 8 checks in one command:
 
 ```bash
 make test
 ```
 
+```
+=== [1/8] Containers running ===
+OK: all four services running
+
+=== [2/8] Service A via Nginx (:8080) ===
+{ "service": "service-a", "status": "healthy", ... }
+
+=== [3/8] Service B not exposed from host ===
+OK: connection refused or timed out
+
+=== [4/8] Service C not exposed from host ===
+OK: connection refused or timed out
+
+=== [5/8] Internal discovery ===
+{ "service": "service-b", "status": "healthy", ... }
+{ "service": "service-c", "status": "healthy", ... }
+
+=== [6/8] Request tracing ===
+{ "request_id": "make-docker-test-trace", "status": "success", ... }
+OK: request ID found in logs
+
+=== [7/8] Stop Service B, observe failure, recover ===
+OK: request failed while B is down
+OK: failure logged by service-a
+{ "request_id": "make-recover-001", "status": "success", ... }
+
+=== [8/8] Readiness endpoint ===
+{ "service": "service-a", "status": "ready" }
+OK: not_ready while B is down
+{ "service": "service-a", "status": "ready" }
 
 All Docker validation commands succeeded.
 
