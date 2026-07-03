@@ -14,6 +14,14 @@ Only **Service A** is publicly reachable through Nginx. Services B and C are int
 
 See [Running with Docker Compose](#running-with-docker-compose) for start commands.
 
+## Quick start
+
+1. Install Docker and ensure the daemon is running.
+2. Clone the repository and change into it.
+3. Start the stack with `docker compose up --build -d`.
+4. Check the public health endpoint at `http://localhost:8080/service-a/health`.
+5. Run `make test` for a full validation pass.
+
 ## Project overview
 
 The system demonstrates operational patterns used in production:
@@ -364,12 +372,12 @@ Full validation evidence: [docs/CONTAINER_VALIDATION.md](docs/CONTAINER_VALIDATI
 
 Commit: `3df3c04fc5e5886462cd43f3e62c7066dbd1e1bd`
 
-Image tag: `sha-3df3c04`
+Image tag: `v1`
 
 Images:
-- `marybahati/devops100-service-a:sha-3df3c04`
-- `marybahati/devops100-service-b:sha-3df3c04`
-- `marybahati/devops100-service-c:sha-3df3c04`
+- `warga24/devops100-service-a:v1`
+- `warga24/devops100-service-b:v1`
+- `warga24/devops100-service-c:v1`
 
 GitHub Actions runs PR verification on every pull request to `main`: `npm ci`, `npm test`, `npm run build --if-present`, local Docker image builds, `docker compose config`, Compose build, Compose startup, and the Nginx health check. Docker Hub publishing runs only after a successful push to `main`.
 
@@ -381,22 +389,22 @@ Required GitHub settings:
 
 ```bash
 cp .env.example .env
-export DOCKERHUB_USERNAME=marybahati
+export DOCKERHUB_USERNAME=warga24
 export APP_NAME=devops100
-export IMAGE_TAG=sha-3df3c04
-./scripts/deploy.sh sha-3df3c04
+export IMAGE_TAG=v1
+./scripts/deploy.sh v1
 ```
 
 ### Verify
 
 ```bash
-DOCKERHUB_USERNAME=marybahati APP_NAME=devops100 IMAGE_TAG=sha-3df3c04 docker compose -f docker-compose.prod.yml ps
+DOCKERHUB_USERNAME=warga24 APP_NAME=devops100 IMAGE_TAG=v1 docker compose -f docker-compose.prod.yml ps
 curl -fsS http://localhost:8080/service-a/health
 ```
 
-Production deployment uses `docker-compose.prod.yml`, which pulls commit-tagged images from Docker Hub and does not build locally. Do not deploy `latest`, `main`, or `dev` tags.
+Production deployment uses `docker-compose.prod.yml`, which pulls version-tagged images from Docker Hub and does not build locally. Do not deploy `latest`, `main`, or `dev` tags.
 
-`sha-3df3c04` is the last image tag already published to Docker Hub. After committing new source changes, publish images with the new short commit SHA and update this section so the reviewed source commit and deployed image tag match exactly.
+`v1` is the latest image tag published to Docker Hub. After committing new source changes, publish images with a new version tag and update this section so the reviewed source state and deployed image tag match exactly.
 
 ## API contract
 
