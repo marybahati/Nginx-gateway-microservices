@@ -274,7 +274,7 @@ curl -fsS http://localhost:8080/service-a/health
 curl -fsS http://localhost:8080/service-a/greet-service-b
 ```
 
-Or run all checks at once:
+For a quick confidence check, run the full validation suite:
 
 ```bash
 make test
