@@ -55,12 +55,23 @@ test:  ## Run all Docker validation checks (full 7-test suite).
 	@$(COMPOSE) logs 2>&1 | grep -q make-docker-test-trace && echo "OK: request ID found in logs" || (echo "FAIL: request ID not found in logs" && exit 1)
 	@echo ""
 	@echo "=== [7/7] Stop Service B, observe failure, recover ==="
-	@$(COMPOSE) stop service-b
+ifeq ($(SKIP_STOP_TEST),1)
+	@echo "SKIP: stop/recover test (SKIP_STOP_TEST=1). Run step 7 manually — see docs/setup-linux.md"
+else
+	@$(COMPOSE) stop service-b || { \
+	  echo ""; \
+	  echo "FAIL: docker compose stop service-b failed (often 'permission denied' on Linux)."; \
+	  echo "  • Use the same user for 'docker compose up' and 'make test' (avoid sudo on only one)."; \
+	  echo "  • Snap Docker: replace with official Docker Engine — docs/setup-linux.md#replace-snap-docker-with-official-docker-engine"; \
+	  echo "  • To skip this step: make test SKIP_STOP_TEST=1"; \
+	  exit 1; \
+	}
 	@curl -sf http://localhost:8080/service-a/greet-service-b -H "X-Request-ID: make-fail-service-b" >/dev/null && echo "UNEXPECTED: request succeeded while B is down" && $(COMPOSE) start service-b && exit 1 || echo "OK: request failed while B is down"
 	@$(COMPOSE) logs service-a 2>&1 | grep -q make-fail-service-b && echo "OK: failure logged by service-a" || (echo "FAIL: failure not logged" && $(COMPOSE) start service-b && exit 1)
 	@$(COMPOSE) start service-b
 	@sleep 2
 	@curl -sf http://localhost:8080/service-a/greet-service-b -H "X-Request-ID: make-recover-001" | python3 -m json.tool
+endif
 	@echo ""
 	@echo "All Docker validation commands succeeded."
 

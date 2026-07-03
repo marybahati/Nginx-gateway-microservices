@@ -56,19 +56,19 @@ Or manually:
 
 ```bash
 # Public entry point (Nginx is the only published port)
-curl -i http://localhost:8080/service-a/health
-curl -i http://localhost:8080/service-a/greet-service-b
+curl -fsS http://localhost:8080/service-a/health
+curl -fsS http://localhost:8080/service-a/greet-service-b
 
 # B and C are NOT reachable from the host
-curl -i --connect-timeout 3 http://localhost:3002/health   # connection refused
-curl -i --connect-timeout 3 http://localhost:3003/health   # connection refused
+curl -fsS --connect-timeout 3 http://localhost:3002/health   # connection refused
+curl -fsS --connect-timeout 3 http://localhost:3003/health   # connection refused
 
 # Internal discovery works inside the network
 docker compose exec service-a node -e "fetch('http://service-b:3002/health').then(r=>r.json()).then(console.log)"
 docker compose exec service-b node -e "fetch('http://service-c:3003/health').then(r=>r.json()).then(console.log)"
 
 # Trace one request
-curl -i http://localhost:8080/service-a/greet-service-b -H "X-Request-ID: demo-container-001"
+curl -fsS http://localhost:8080/service-a/greet-service-b -H "X-Request-ID: demo-container-001"
 docker compose logs | grep demo-container-001
 ```
 
@@ -90,11 +90,11 @@ make test                           # re-run validation
 
 ```bash
 docker compose stop service-b
-curl -i http://localhost:8080/service-a/greet-service-b -H "X-Request-ID: fail-service-b-001"
+curl -fsS http://localhost:8080/service-a/greet-service-b -H "X-Request-ID: fail-service-b-001"
 docker compose logs service-a | grep fail-service-b-001
 
 docker compose start service-b
-curl -i http://localhost:8080/service-a/greet-service-b
+curl -fsS http://localhost:8080/service-a/greet-service-b
 ```
 
 ## Troubleshooting
@@ -102,7 +102,7 @@ curl -i http://localhost:8080/service-a/greet-service-b
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | `Cannot connect to the Docker daemon` | Docker Desktop not running | `open -a Docker` and wait for it to start |
-| `port 8080 already in use` | Another process on 8080 | Change the host port in `docker-compose.yml` (e.g. `"8081:80"`) |
+| `port 8080 already in use` | Another process on 8080 | Change the host port in `docker-compose.yml` (e.g. `"8081:8080"`) |
 | `service-a` keeps restarting | B or C not healthy yet | `docker compose logs service-a`; wait and retry |
 | Nginx 502 | Stale upstream IP (nginx DNS cache) or service-a not ready | `docker compose ps`; `docker compose logs nginx` (look for `Connection refused`); `docker compose restart nginx` after config update |
 | `curl localhost:8080` fails | Containers not up | `docker compose up --build -d` |

@@ -3,7 +3,7 @@
 Validation evidence for the Docker Compose migration. All tests were run on macOS with Docker Desktop.
 
 **Branch:** `feat/docker`  
-**Date:** 2026-06-25
+**Date:** 2026-07-03
 
 ## Prerequisites
 
@@ -19,6 +19,10 @@ Validation evidence for the Docker Compose migration. All tests were run on macO
 
 Each application service uses `restart: unless-stopped`. Containers restart automatically after a host reboot or Docker daemon restart, but stay stopped if you explicitly run `docker compose stop`. This mirrors production "keep running unless intentionally shut down" without fighting manual debugging sessions.
 
+## Container hardening
+
+All runtime containers use explicit non-root users. The three Node.js services run as the built-in `node` user, and Nginx uses the unprivileged Nginx image on container port `8080`. Compose also drops Linux capabilities and sets `no-new-privileges:true` for all services.
+
 ---
 
 ## 1. Start the system
@@ -28,7 +32,8 @@ docker compose up --build -d
 ```
 
 ```
- Network nginx-gateway-microservices_gateway  Created
+ Network nginx-gateway-microservices_private  Created
+ Network nginx-gateway-microservices_public  Created
  Container nginx-gateway-microservices-service-b-1  Started
  Container nginx-gateway-microservices-service-c-1  Started
  Container nginx-gateway-microservices-service-a-1  Started
@@ -45,40 +50,55 @@ docker compose ps
 
 ```
 NAME                                      IMAGE                                   COMMAND                  SERVICE     STATUS          PORTS
-nginx-gateway-microservices-nginx-1       nginx:1.27-alpine                       "/docker-entrypoint.…"   nginx       Up              0.0.0.0:8080->80/tcp
-nginx-gateway-microservices-service-a-1   nginx-gateway-microservices-service-a   "docker-entrypoint.s…"   service-a   Up
-nginx-gateway-microservices-service-b-1   nginx-gateway-microservices-service-b   "docker-entrypoint.s…"   service-b   Up
-nginx-gateway-microservices-service-c-1   nginx-gateway-microservices-service-c   "docker-entrypoint.s…"   service-c   Up
+nginx-gateway-microservices-nginx-1       nginxinc/nginx-unprivileged:1.27.5-alpine   "/docker-entrypoint.…"   nginx       Up (healthy)   0.0.0.0:8080->8080/tcp
+nginx-gateway-microservices-service-a-1   nginx-gateway-microservices-service-a       "docker-entrypoint.s…"   service-a   Up (healthy)
+nginx-gateway-microservices-service-b-1   nginx-gateway-microservices-service-b       "docker-entrypoint.s…"   service-b   Up (healthy)
+nginx-gateway-microservices-service-c-1   nginx-gateway-microservices-service-c       "docker-entrypoint.s…"   service-c   Up (healthy)
 ```
 
-All four services are running. Only Nginx publishes a host port (`8080:80`).
+All four services are running and healthy. Only Nginx publishes a host port (`8080:8080`).
+
+Security checks:
+
+```bash
+docker compose exec -T service-a id
+docker compose exec -T service-b id
+docker compose exec -T service-c id
+docker compose exec -T nginx id
+docker network inspect nginx-gateway-microservices_private --format '{{.Internal}}'
+docker network inspect nginx-gateway-microservices_public --format '{{.Internal}}'
+```
+
+```
+uid=1000(node) gid=1000(node) groups=1000(node)
+uid=1000(node) gid=1000(node) groups=1000(node)
+uid=1000(node) gid=1000(node) groups=1000(node)
+uid=101(nginx) gid=101(nginx) groups=101(nginx)
+true
+false
+```
+
+The `private` network is internal. The `public` network exists only so Nginx can publish the single host entry point.
 
 ---
 
 ## 3. Test public entry point
 
 ```bash
-curl -i http://localhost:8080/service-a/health
+curl -fsS http://localhost:8080/service-a/health
 ```
 
-```
-HTTP/1.1 200 OK
-Server: nginx/1.27.5
-Content-Type: application/json; charset=utf-8
-
+```json
 {"service":"service-a","status":"healthy","port":3001,"message":"Hello service-a listening on 3001"}
 ```
 
 Full flow:
 
 ```bash
-curl -i http://localhost:8080/service-a/greet-service-b
+curl -fsS http://localhost:8080/service-a/greet-service-b
 ```
 
-```
-HTTP/1.1 200 OK
-Content-Type: application/json; charset=utf-8
-
+```json
 {"request_id":"<uuid>","status":"success","message":"Request completed successfully"}
 ```
 
@@ -89,8 +109,8 @@ Content-Type: application/json; charset=utf-8
 From the host:
 
 ```bash
-curl -i --connect-timeout 3 http://localhost:3002/health
-curl -i --connect-timeout 3 http://localhost:3003/health
+curl -fsS --connect-timeout 3 http://localhost:3002/health
+curl -fsS --connect-timeout 3 http://localhost:3003/health
 ```
 
 ```
@@ -103,8 +123,13 @@ Connection refused — ports 3002 and 3003 are not published to the host.
 Nginx also returns 404 for direct B/C routes:
 
 ```bash
-curl -i http://localhost:8080/service-b/health   # 404
-curl -i http://localhost:8080/service-c/health   # 404
+curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8080/service-b/health
+curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8080/service-c/health
+```
+
+```
+404
+404
 ```
 
 ---
@@ -114,16 +139,23 @@ curl -i http://localhost:8080/service-c/health   # 404
 From inside the Docker Compose network:
 
 ```bash
-docker compose exec service-a node -e "fetch('http://service-b:3002/health').then(r=>r.json()).then(console.log)"
-docker compose exec service-b node -e "fetch('http://service-c:3003/health').then(r=>r.json()).then(console.log)"
+docker compose exec service-a node -e "fetch('http://service-b:3002/health').then(r=>r.json()).then(d=>console.log(JSON.stringify(d,null,2)))"
+docker compose exec service-b node -e "fetch('http://service-c:3003/health').then(r=>r.json()).then(d=>console.log(JSON.stringify(d,null,2)))"
 ```
 
 ```
-HTTP/1.1 200 OK
-{"service":"service-b","status":"healthy","port":3002,"message":"Hello service-b listening on 3002"}
-
-HTTP/1.1 200 OK
-{"service":"service-c","status":"healthy","port":3003,"message":"Hello service-c listening on 3003"}
+{
+  "service": "service-b",
+  "status": "healthy",
+  "port": 3002,
+  "message": "Hello service-b listening on 3002"
+}
+{
+  "service": "service-c",
+  "status": "healthy",
+  "port": 3003,
+  "message": "Hello service-c listening on 3003"
+}
 ```
 
 Services communicate using Compose DNS names (`service-b`, `service-c`), not `localhost`.
@@ -133,14 +165,13 @@ Services communicate using Compose DNS names (`service-b`, `service-c`), not `lo
 ## 6. Trace one request
 
 ```bash
-curl -i http://localhost:8080/service-a/greet-service-b \
+curl -fsS http://localhost:8080/service-a/greet-service-b \
   -H "X-Request-ID: demo-container-001"
 
 docker compose logs | grep demo-container-001
 ```
 
-```
-HTTP/1.1 200 OK
+```json
 {"request_id":"demo-container-001","status":"success","message":"Request completed successfully"}
 ```
 
@@ -165,14 +196,11 @@ nginx-1      | {"timestamp":"...","request_id":"demo-container-001","method":"GE
 ```bash
 docker compose stop service-b
 
-curl -i http://localhost:8080/service-a/greet-service-b \
+curl -fsS http://localhost:8080/service-a/greet-service-b \
   -H "X-Request-ID: fail-service-b-001"
 ```
 
-```
-HTTP/1.1 500 Internal Server Error
-Content-Type: application/json; charset=utf-8
-
+```json
 {"request_id":"fail-service-b-001","status":"error","message":"fetch failed"}
 ```
 
@@ -192,12 +220,11 @@ service-a-1  | {"timestamp":"...","service":"service-a","event":"request_failed"
 ```bash
 docker compose start service-b
 
-curl -i http://localhost:8080/service-a/greet-service-b \
+curl -fsS http://localhost:8080/service-a/greet-service-b \
   -H "X-Request-ID: recover-001"
 ```
 
-```
-HTTP/1.1 200 OK
+```json
 {"request_id":"recover-001","status":"success","message":"Request completed successfully"}
 ```
 

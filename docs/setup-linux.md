@@ -68,19 +68,19 @@ make test
 Or manually:
 
 ```bash
-curl -i http://localhost:8080/service-a/health
-curl -i http://localhost:8080/service-a/greet-service-b
+curl -fsS http://localhost:8080/service-a/health
+curl -fsS http://localhost:8080/service-a/greet-service-b
 
 # B and C are NOT reachable from the host
-curl -i --connect-timeout 3 http://localhost:3002/health
-curl -i --connect-timeout 3 http://localhost:3003/health
+curl -fsS --connect-timeout 3 http://localhost:3002/health
+curl -fsS --connect-timeout 3 http://localhost:3003/health
 
 # Internal discovery
 docker compose exec service-a node -e "fetch('http://service-b:3002/health').then(r=>r.json()).then(console.log)"
 docker compose exec service-b node -e "fetch('http://service-c:3003/health').then(r=>r.json()).then(console.log)"
 
 # Trace one request
-curl -i http://localhost:8080/service-a/greet-service-b -H "X-Request-ID: demo-container-001"
+curl -fsS http://localhost:8080/service-a/greet-service-b -H "X-Request-ID: demo-container-001"
 docker compose logs | grep demo-container-001
 ```
 
@@ -102,11 +102,11 @@ make test
 
 ```bash
 docker compose stop service-b
-curl -i http://localhost:8080/service-a/greet-service-b -H "X-Request-ID: fail-service-b-001"
+curl -fsS http://localhost:8080/service-a/greet-service-b -H "X-Request-ID: fail-service-b-001"
 docker compose logs service-a | grep fail-service-b-001
 
 docker compose start service-b
-curl -i http://localhost:8080/service-a/greet-service-b
+curl -fsS http://localhost:8080/service-a/greet-service-b
 ```
 
 ## Troubleshooting
@@ -118,6 +118,83 @@ curl -i http://localhost:8080/service-a/greet-service-b
 | `port 8080 already in use` | Another process on 8080 | Change host port in `docker-compose.yml` |
 | `service-a` keeps restarting | Dependency wait failed | `docker compose logs service-a service-b service-c` |
 | Nginx 502 | Stale upstream IP (nginx DNS cache) or service-a not ready | `docker compose ps`; `docker compose logs nginx` (look for `Connection refused`); `docker compose restart nginx` after config update |
+| `cannot stop container` … `permission denied` | Snap Docker + AppArmor, or mixed `sudo` usage | See [Replace Snap Docker with official Docker Engine](#replace-snap-docker-with-official-docker-engine) |
+
+### Replace Snap Docker with official Docker Engine
+
+Use this when `docker compose stop` fails with `permission denied` but other commands work (common on Ubuntu with Snap Docker).
+
+**Warning:** Removing Snap Docker deletes Snap-managed images and containers. You will rebuild the project stack afterward.
+
+**1. Confirm Snap is the problem**
+
+```bash
+which docker
+snap list docker
+```
+
+If `which docker` shows `/snap/bin/docker`, continue below.
+
+**2. Stop and remove Snap Docker**
+
+```bash
+cd ~/nginx-microservices/Nginx-gateway-microservices   # or your clone path
+docker compose down || true
+sudo snap stop docker
+sudo snap remove --purge docker
+```
+
+**3. Remove conflicting packages** (Ubuntu — safe to run even if not installed)
+
+```bash
+sudo apt-get remove -y docker docker-engine docker.io containerd runc docker-compose-v2 2>/dev/null || true
+```
+
+**4. Install official Docker Engine + Compose plugin** (Ubuntu)
+
+```bash
+sudo apt-get update
+sudo apt-get install -y ca-certificates curl
+sudo install -m 0755 -d /etc/apt/keyrings
+sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+sudo chmod a+r /etc/apt/keyrings/docker.asc
+
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu \
+  $(. /etc/os-release && echo "${VERSION_CODENAME:-$VERSION_ID}") stable" | \
+  sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+sudo apt-get update
+sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+```
+
+Other distros: https://docs.docker.com/engine/install/
+
+**5. Enable Docker and add your user to the `docker` group**
+
+```bash
+sudo systemctl enable --now docker
+sudo usermod -aG docker $USER
+newgrp docker
+```
+
+Log out and back in if `newgrp` is not enough. Verify you are not using Snap:
+
+```bash
+which docker                    # should be /usr/bin/docker
+docker --version
+docker compose version
+docker run --rm hello-world
+```
+
+**6. Rebuild and test this project**
+
+```bash
+cd ~/nginx-microservices/Nginx-gateway-microservices
+docker compose up --build -d
+make test
+```
+
+`docker compose stop service-b` and `make test` step 7 should work without `permission denied`.
 
 ### Build fails during npm
 
@@ -132,7 +209,7 @@ docker compose build service-b --progress=plain --no-cache 2>&1 | tail -50
 **2. Test network from a throwaway container:**
 
 ```bash
-docker run --rm node:20-alpine wget -qO- https://registry.npmjs.org/express/latest
+docker run --rm node:20.19.5-alpine3.22 wget -qO- https://registry.npmjs.org/express/latest
 ```
 
 If that fails, Docker on the host cannot reach npm during builds.

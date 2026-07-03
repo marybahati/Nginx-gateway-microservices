@@ -30,17 +30,17 @@ The system demonstrates operational patterns used in production:
 
 ### High-level view
 
-The system is a four-container stack on a single Docker bridge network (`gateway`). External clients never talk to the microservices directly — all public HTTP traffic enters through Nginx, which forwards only Service A routes. Services B and C exist on the internal network and are invoked by other containers using Compose DNS names.
+The system is a four-container stack with a public edge network for Nginx and an internal Docker bridge network (`private`) for service traffic. External clients never talk to the microservices directly — all public HTTP traffic enters through Nginx, which forwards only Service A routes. Services A, B, and C exist only on the internal network and are invoked by other containers using Compose DNS names.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │  Host machine                                                               │
 │                                                                             │
 │   Client ──► localhost:8080 ──► ┌─────────────────────────────────────┐   │
-│                                 │  Docker network: gateway              │   │
+│                                 │  Docker networks: public + private    │   │
 │                                 │                                     │   │
 │                                 │  ┌─────────┐                        │   │
-│                                 │  │  nginx  │ :80  (only published   │   │
+│                                 │  │  nginx  │ :8080 (only published   │   │
 │                                 │  └────┬────┘       host port)       │   │
 │                                 │       │ proxy /service-a/*          │   │
 │                                 │       ▼                             │   │
@@ -60,7 +60,7 @@ The system is a four-container stack on a single Docker bridge network (`gateway
 
 | Service | Container port | Host access | Role |
 |---|---|---|---|
-| Nginx | 80 | `localhost:8080` | Public reverse proxy — only entry point |
+| Nginx | 8080 | `localhost:8080` | Public reverse proxy — only entry point |
 | Service A | 3001 | Via Nginx `/service-a/*` only | Orchestrator — starts the chain, waits for callback |
 | Service B | 3002 | Internal network only | Relay — forwards to Service C |
 | Service C | 3003 | Internal network only | Processor — completes work and callbacks to A |
@@ -71,16 +71,16 @@ Compose enforces a safe boot sequence so Service A never starts before its depen
 
 ```
 service-b ──┐
-            ├──► service-a (wait-for-deps.sh) ──► nginx (waits for A healthy)
+            ├──► service-a (wait-for-deps.mjs) ──► nginx (waits for A healthy)
 service-c ──┘
 ```
 
 1. **service-b** and **service-c** start first (no inter-dependencies).
-2. **service-a** runs `wait-for-deps.sh`, polling `http://service-b:3002/health` and `http://service-c:3003/health` until both respond (or exits after max retries).
+2. **service-a** runs `wait-for-deps.mjs`, polling `http://service-b:3002/health` and `http://service-c:3003/health` until both respond (or exits after max retries).
 3. **service-a** starts Node and exposes `/health`; Compose healthcheck must pass.
 4. **nginx** starts only after Service A is healthy, avoiding 502s on cold boot.
 
-Each container uses `restart: unless-stopped` so the stack recovers automatically after a host reboot unless you explicitly stopped it.
+Each container uses `restart: unless-stopped` so the stack recovers automatically after a host reboot unless you explicitly stopped it. Runtime containers also run as non-root users with dropped Linux capabilities and `no-new-privileges`.
 
 ### End-to-end request flow
 
@@ -120,7 +120,7 @@ A simple health check (`GET /service-a/health`) follows steps 1–2 only and ret
 
 #### Nginx (gateway)
 
-- Listens on container port **80**; Docker maps it to host **8080**.
+- Listens on unprivileged container port **8080**; Docker maps it to host **8080**.
 - **Only** `location /service-a/` is proxied — all other paths return **404** (including `/service-b/` and `/service-c/`).
 - Upstream target: `service-a:3001` via Docker embedded DNS (`127.0.0.11`), re-resolved every 10s.
 - Injects `X-Request-ID`: uses the client header if present, otherwise Nginx generates one via `$request_id`.
@@ -177,7 +177,7 @@ Inside containers, peers are reached by **Compose service name** — never `loca
 | B → C | `service-c` | `http://service-c:3003` |
 | C → A (callback) | `service-a` | `http://service-a:3001` |
 
-Docker's embedded DNS on the `gateway` network maps each name to the container's current IP. Nginx uses `resolver 127.0.0.11` so it picks up new IPs after container restarts. Node.js `fetch` in the services resolves hostnames on each request.
+Docker's embedded DNS on the `private` network maps each service name to the container's current IP. Nginx is attached to both `public` and `private`, but it reaches Service A through `private`. Node.js `fetch` in the services resolves hostnames on each request.
 
 #### Request tracing
 
@@ -213,7 +213,7 @@ Key `event` values across the flow: `request_received` → `request_forwarded` �
 |---|---|---|
 | From host (`localhost:3002/3003`) | Blocked — port not published | Blocked — port not published |
 | From Nginx (`/service-b/`, `/service-c/`) | 404 — no proxy rule | 404 — no proxy rule |
-| From inside `gateway` network | Reachable at `service-b:3002` | Reachable at `service-c:3003` |
+| From inside `private` network | Reachable at `service-b:3002` | Reachable at `service-c:3003` |
 
 This mirrors production patterns: internal services are not exposed to the public internet; only the gateway is.
 
@@ -263,7 +263,7 @@ docker compose ps
 
 Expected: four containers running — `nginx`, `service-a`, `service-b`, `service-c`.
 
-Each Node.js service has its own `Dockerfile` under `services/<name>/`. Images use the stock `node:20-alpine` base with **no extra OS packages** (`apk` is not required), which avoids Alpine package-index failures on restricted Linux networks during build.
+Each Node.js service has its own `Dockerfile` under `services/<name>/`. Images use the patch-pinned `node:20.19.5-alpine3.22` base with **no extra OS packages** (`apk` is not required), which avoids Alpine package-index failures on restricted Linux networks during build. The service processes run as the non-root `node` user.
 
 Each Dockerfile runs `npm ci` against that service's `package.json` **`dependencies`** (via `package-lock.json`) — e.g. `express`, `uuid`. There are no `devDependencies` in this project.
 
@@ -324,7 +324,7 @@ Failure test (stop B, observe error, recover):
 
 ```bash
 docker compose stop service-b
-curl -i http://localhost:8080/service-a/greet-service-b -H "X-Request-ID: fail-test-001"
+curl -fsS http://localhost:8080/service-a/greet-service-b -H "X-Request-ID: fail-test-001"
 docker compose logs service-a | grep fail-test-001
 docker compose start service-b
 curl http://localhost:8080/service-a/greet-service-b
@@ -348,6 +348,43 @@ make restart     # restart all services
 ```
 
 Full validation evidence: [docs/CONTAINER_VALIDATION.md](docs/CONTAINER_VALIDATION.md)
+
+## Container CI/CD Deployment
+
+### Latest Deployed Version
+
+Commit: `3df3c04fc5e5886462cd43f3e62c7066dbd1e1bd`
+
+Image tag: `sha-3df3c04`
+
+Images:
+- `marybahati/devops100-service-a:sha-3df3c04`
+- `marybahati/devops100-service-b:sha-3df3c04`
+- `marybahati/devops100-service-c:sha-3df3c04`
+
+GitHub Actions runs PR verification on every pull request to `main`: `npm ci`, `npm test`, `npm run build --if-present`, local Docker image builds, `docker compose config`, Compose build, Compose startup, and the Nginx health check. Docker Hub publishing runs only after a successful push to `main`.
+
+Required GitHub settings:
+- Repository variable: `DOCKERHUB_USERNAME`
+- Repository secret: `DOCKERHUB_TOKEN`
+
+### Deploy
+
+```bash
+cp .env.example .env
+export DOCKERHUB_USERNAME=marybahati
+export APP_NAME=devops100
+./scripts/deploy.sh sha-3df3c04
+```
+
+### Verify
+
+```bash
+docker compose -f docker-compose.prod.yml ps
+curl -fsS http://localhost:8080/service-a/health
+```
+
+Production deployment uses `docker-compose.prod.yml`, which pulls commit-tagged images from Docker Hub and does not build locally. Do not deploy `latest`, `main`, or `dev` tags.
 
 ## API contract
 

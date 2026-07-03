@@ -1,18 +1,23 @@
-FROM node:20-alpine
+FROM node:20.19.5-alpine3.22
 
 WORKDIR /app
 
-COPY shared/ /app/shared/
-COPY services/service-c/package.json services/service-c/package-lock.json /app/services/service-c/
+COPY --chown=node:node shared/ /app/shared/
+COPY --chown=node:node services/service-c/package.json services/service-c/package-lock.json /app/services/service-c/
 WORKDIR /app/services/service-c
 # Install runtime packages from package.json "dependencies" (express, …)
 RUN npm config set fetch-retries 5 \
  && npm config set fetch-retry-mintimeout 20000 \
  && npm config set fetch-retry-maxtimeout 120000 \
- && npm ci
+ && npm ci \
+ && chown -R node:node /app
 
-COPY services/service-c/index.js /app/services/service-c/
+COPY --chown=node:node services/service-c/index.js /app/services/service-c/
 
 ENV BIND_HOST=0.0.0.0
+
+EXPOSE 3003
+
+USER node
 
 CMD ["node", "index.js"]

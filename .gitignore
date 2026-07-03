@@ -6,6 +6,11 @@ node_modules/
 *.log
 *.log.*
 
+# Local environment files
+.env
+.env.*
+!.env.example
+
 # Editor / OS junk
 .DS_Store
 .idea/

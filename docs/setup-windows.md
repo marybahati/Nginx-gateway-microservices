@@ -59,8 +59,8 @@ Expected: four containers running — `nginx`, `service-a`, `service-b`, `servic
 From PowerShell or Git Bash:
 
 ```powershell
-curl.exe -i http://localhost:8080/service-a/health
-curl.exe -i http://localhost:8080/service-a/greet-service-b
+curl.exe -fsS http://localhost:8080/service-a/health
+curl.exe -fsS http://localhost:8080/service-a/greet-service-b
 ```
 
 Or use WSL / Git Bash with the Makefile (requires `make`):
@@ -75,15 +75,15 @@ Manual checks:
 
 ```powershell
 # B and C are NOT reachable from the host
-curl.exe -i --connect-timeout 3 http://localhost:3002/health
-curl.exe -i --connect-timeout 3 http://localhost:3003/health
+curl.exe -fsS --connect-timeout 3 http://localhost:3002/health
+curl.exe -fsS --connect-timeout 3 http://localhost:3003/health
 
 # Internal discovery
 docker compose exec service-a node -e "fetch('http://service-b:3002/health').then(r=>r.json()).then(console.log)"
 docker compose exec service-b node -e "fetch('http://service-c:3003/health').then(r=>r.json()).then(console.log)"
 
 # Trace one request
-curl.exe -i http://localhost:8080/service-a/greet-service-b -H "X-Request-ID: demo-container-001"
+curl.exe -fsS http://localhost:8080/service-a/greet-service-b -H "X-Request-ID: demo-container-001"
 docker compose logs | findstr demo-container-001
 ```
 
@@ -104,11 +104,11 @@ docker compose down
 
 ```powershell
 docker compose stop service-b
-curl.exe -i http://localhost:8080/service-a/greet-service-b -H "X-Request-ID: fail-service-b-001"
+curl.exe -fsS http://localhost:8080/service-a/greet-service-b -H "X-Request-ID: fail-service-b-001"
 docker compose logs service-a
 
 docker compose start service-b
-curl.exe -i http://localhost:8080/service-a/greet-service-b
+curl.exe -fsS http://localhost:8080/service-a/greet-service-b
 ```
 
 ## Troubleshooting

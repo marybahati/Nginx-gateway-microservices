@@ -1,8 +1,6 @@
 services:
   service-b:
-    build:
-      context: .
-      dockerfile: services/service-b/Dockerfile
+    image: ${DOCKERHUB_USERNAME:?set DOCKERHUB_USERNAME}/${APP_NAME:?set APP_NAME}-service-b:${IMAGE_TAG:?set IMAGE_TAG}
     user: "node"
     environment:
       BIND_HOST: 0.0.0.0
@@ -29,9 +27,7 @@ services:
       - private
 
   service-c:
-    build:
-      context: .
-      dockerfile: services/service-c/Dockerfile
+    image: ${DOCKERHUB_USERNAME:?set DOCKERHUB_USERNAME}/${APP_NAME:?set APP_NAME}-service-c:${IMAGE_TAG:?set IMAGE_TAG}
     user: "node"
     environment:
       BIND_HOST: 0.0.0.0
@@ -58,9 +54,7 @@ services:
       - private
 
   service-a:
-    build:
-      context: .
-      dockerfile: services/service-a/Dockerfile
+    image: ${DOCKERHUB_USERNAME:?set DOCKERHUB_USERNAME}/${APP_NAME:?set APP_NAME}-service-a:${IMAGE_TAG:?set IMAGE_TAG}
     user: "node"
     environment:
       BIND_HOST: 0.0.0.0
