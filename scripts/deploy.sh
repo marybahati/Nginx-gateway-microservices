@@ -1,16 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-IMAGE_TAG="${1:-}"
+REQUESTED_IMAGE_TAG="${1:-}"
 
-if [ -z "$IMAGE_TAG" ]; then
+if [ -z "$REQUESTED_IMAGE_TAG" ]; then
   echo "Usage: ./scripts/deploy.sh sha-<short-commit-hash>"
-  echo "Example: ./scripts/deploy.sh sha-a1b2c3d"
-  exit 1
-fi
-
-if [[ "$IMAGE_TAG" != sha-* ]]; then
-  echo "IMAGE_TAG must be commit-pinned and start with 'sha-'"
   echo "Example: ./scripts/deploy.sh sha-a1b2c3d"
   exit 1
 fi
@@ -22,8 +16,14 @@ if [ -f .env ]; then
   set +a
 fi
 
-export IMAGE_TAG
-export APP_NAME="${APP_NAME:-$(basename "$PWD" | tr '[:upper:]' '[:lower:]')}"
+if [[ "$REQUESTED_IMAGE_TAG" != sha-* ]]; then
+  echo "IMAGE_TAG must be commit-pinned and start with 'sha-'"
+  echo "Example: ./scripts/deploy.sh sha-a1b2c3d"
+  exit 1
+fi
+
+export IMAGE_TAG="$REQUESTED_IMAGE_TAG"
+export APP_NAME="${APP_NAME:-devops100}"
 
 if [ -z "${DOCKERHUB_USERNAME:-}" ]; then
   echo "Missing DOCKERHUB_USERNAME"

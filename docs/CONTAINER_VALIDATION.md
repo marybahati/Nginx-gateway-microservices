@@ -109,13 +109,13 @@ curl -fsS http://localhost:8080/service-a/greet-service-b
 From the host:
 
 ```bash
-curl -fsS --connect-timeout 3 http://localhost:3002/health
-curl -fsS --connect-timeout 3 http://localhost:3003/health
+curl -fsS --connect-timeout 3 http://localhost:3002/health >/dev/null 2>&1 && echo "UNEXPECTED: service-b is exposed" || echo "OK: service-b is not exposed"
+curl -fsS --connect-timeout 3 http://localhost:3003/health >/dev/null 2>&1 && echo "UNEXPECTED: service-c is exposed" || echo "OK: service-c is not exposed"
 ```
 
 ```
-curl: (7) Failed to connect to localhost port 3002 after 0 ms: Couldn't connect to server
-curl: (7) Failed to connect to localhost port 3003 after 0 ms: Couldn't connect to server
+OK: service-b is not exposed
+OK: service-c is not exposed
 ```
 
 Connection refused — ports 3002 and 3003 are not published to the host.
@@ -123,13 +123,13 @@ Connection refused — ports 3002 and 3003 are not published to the host.
 Nginx also returns 404 for direct B/C routes:
 
 ```bash
-curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8080/service-b/health
-curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8080/service-c/health
+code=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/service-b/health); [ "$code" = "404" ] && echo "OK: service-b route returns 404" || echo "UNEXPECTED: service-b route returned $code"
+code=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/service-c/health); [ "$code" = "404" ] && echo "OK: service-c route returns 404" || echo "UNEXPECTED: service-c route returned $code"
 ```
 
 ```
-404
-404
+OK: service-b route returns 404
+OK: service-c route returns 404
 ```
 
 ---
@@ -196,12 +196,15 @@ nginx-1      | {"timestamp":"...","request_id":"demo-container-001","method":"GE
 ```bash
 docker compose stop service-b
 
-curl -fsS http://localhost:8080/service-a/greet-service-b \
-  -H "X-Request-ID: fail-service-b-001"
+code=$(curl -sS -o /tmp/service-b-down.json -w "%{http_code}" http://localhost:8080/service-a/greet-service-b \
+  -H "X-Request-ID: fail-service-b-001" || true)
+cat /tmp/service-b-down.json; echo
+[ "$code" -ge 500 ] && echo "OK: request failed while B is down (HTTP $code)" || echo "UNEXPECTED: request returned HTTP $code"
 ```
 
-```json
+```
 {"request_id":"fail-service-b-001","status":"error","message":"fetch failed"}
+OK: request failed while B is down (HTTP 500)
 ```
 
 Service A logs the failure:
@@ -260,13 +263,13 @@ OK: connection refused or timed out
 { "service": "service-c", "status": "healthy", ... }
 
 === [6/7] Request tracing ===
-{ "request_id": "make-docker-test-trace", "status": "success", ... }
-OK: request ID found in logs
+{ "request_id": "make-trace-<timestamp>", "status": "success", ... }
+OK: request ID found in logs (make-trace-<timestamp>)
 
 === [7/7] Stop Service B, observe failure, recover ===
-OK: request failed while B is down
-OK: failure logged by service-a
-{ "request_id": "make-recover-001", "status": "success", ... }
+OK: request failed while B is down (HTTP 500)
+OK: failure logged by service-a (make-fail-<timestamp>)
+{ "request_id": "make-recover-<timestamp>", "status": "success", ... }
 
 All Docker validation commands succeeded.
 ```

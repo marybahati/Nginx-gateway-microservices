@@ -13,6 +13,7 @@ Goal: run the full Nginx gateway microservices stack on your Mac using Docker Co
 | RAM | 4 GB free |
 | Disk | 5 GB free for images |
 | macOS | 13 Ventura or newer |
+| Tools | Git and curl; `make` is optional but recommended |
 
 ## 2. Install Docker Desktop
 
@@ -32,9 +33,8 @@ If you don't have Homebrew: download [Docker Desktop for Mac](https://docs.docke
 ```bash
 mkdir -p ~/nginx-microservices
 cd ~/nginx-microservices
-git clone <your-repo-url> Nginx-gateway-microservices
+git clone https://github.com/marybahati/Nginx-gateway-microservices.git Nginx-gateway-microservices
 cd Nginx-gateway-microservices
-git checkout feat/docker    # or your Docker branch
 ```
 
 ## 4. Start the system
@@ -60,12 +60,12 @@ curl -fsS http://localhost:8080/service-a/health
 curl -fsS http://localhost:8080/service-a/greet-service-b
 
 # B and C are NOT reachable from the host
-curl -fsS --connect-timeout 3 http://localhost:3002/health   # connection refused
-curl -fsS --connect-timeout 3 http://localhost:3003/health   # connection refused
+curl -fsS --connect-timeout 3 http://localhost:3002/health >/dev/null 2>&1 && echo "UNEXPECTED: service-b is exposed" || echo "OK: service-b is not exposed"
+curl -fsS --connect-timeout 3 http://localhost:3003/health >/dev/null 2>&1 && echo "UNEXPECTED: service-c is exposed" || echo "OK: service-c is not exposed"
 
 # Internal discovery works inside the network
-docker compose exec service-a node -e "fetch('http://service-b:3002/health').then(r=>r.json()).then(console.log)"
-docker compose exec service-b node -e "fetch('http://service-c:3003/health').then(r=>r.json()).then(console.log)"
+docker compose exec service-a node -e "fetch('http://service-b:3002/health').then(r=>r.json()).then(d=>console.log(JSON.stringify(d,null,2)))"
+docker compose exec service-b node -e "fetch('http://service-c:3003/health').then(r=>r.json()).then(d=>console.log(JSON.stringify(d,null,2)))"
 
 # Trace one request
 curl -fsS http://localhost:8080/service-a/greet-service-b -H "X-Request-ID: demo-container-001"
@@ -90,7 +90,9 @@ make test                           # re-run validation
 
 ```bash
 docker compose stop service-b
-curl -fsS http://localhost:8080/service-a/greet-service-b -H "X-Request-ID: fail-service-b-001"
+code=$(curl -sS -o /tmp/service-b-down.json -w "%{http_code}" http://localhost:8080/service-a/greet-service-b -H "X-Request-ID: fail-service-b-001" || true)
+cat /tmp/service-b-down.json; echo
+[ "$code" -ge 500 ] && echo "OK: request failed while B is down (HTTP $code)" || echo "UNEXPECTED: request returned HTTP $code"
 docker compose logs service-a | grep fail-service-b-001
 
 docker compose start service-b

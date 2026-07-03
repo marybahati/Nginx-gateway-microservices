@@ -38,7 +38,7 @@ test:  ## Run all Docker validation checks (full 7-test suite).
 	if [ "$$count" -eq 4 ]; then echo "OK: all four services running"; else echo "FAIL: expected 4 running containers, got $$count"; $(COMPOSE) ps; exit 1; fi
 	@echo ""
 	@echo "=== [2/7] Service A via Nginx (:8080) ==="
-	@curl -sf http://localhost:8080/service-a/health | python3 -m json.tool
+	@curl -sf http://localhost:8080/service-a/health; echo
 	@echo ""
 	@echo "=== [3/7] Service B not exposed from host ==="
 	@curl -sf --connect-timeout 3 http://localhost:3002/health && echo "UNEXPECTED: B is exposed" && exit 1 || echo "OK: connection refused or timed out"
@@ -51,8 +51,9 @@ test:  ## Run all Docker validation checks (full 7-test suite).
 	@$(COMPOSE) exec -T service-b node -e "fetch('http://service-c:3003/health').then(r=>r.json()).then(d=>console.log(JSON.stringify(d,null,2)))"
 	@echo ""
 	@echo "=== [6/7] Request tracing ==="
-	@curl -sf http://localhost:8080/service-a/greet-service-b -H "X-Request-ID: make-docker-test-trace" | python3 -m json.tool
-	@$(COMPOSE) logs 2>&1 | grep -q make-docker-test-trace && echo "OK: request ID found in logs" || (echo "FAIL: request ID not found in logs" && exit 1)
+	@trace_id="make-trace-$$(date +%s)"; \
+	curl -sf http://localhost:8080/service-a/greet-service-b -H "X-Request-ID: $$trace_id"; echo; \
+	$(COMPOSE) logs --since 2m 2>&1 | grep -q "$$trace_id" && echo "OK: request ID found in logs ($$trace_id)" || (echo "FAIL: request ID not found in logs ($$trace_id)" && exit 1)
 	@echo ""
 	@echo "=== [7/7] Stop Service B, observe failure, recover ==="
 ifeq ($(SKIP_STOP_TEST),1)
@@ -66,11 +67,15 @@ else
 	  echo "  • To skip this step: make test SKIP_STOP_TEST=1"; \
 	  exit 1; \
 	}
-	@curl -sf http://localhost:8080/service-a/greet-service-b -H "X-Request-ID: make-fail-service-b" >/dev/null && echo "UNEXPECTED: request succeeded while B is down" && $(COMPOSE) start service-b && exit 1 || echo "OK: request failed while B is down"
-	@$(COMPOSE) logs service-a 2>&1 | grep -q make-fail-service-b && echo "OK: failure logged by service-a" || (echo "FAIL: failure not logged" && $(COMPOSE) start service-b && exit 1)
+	@fail_id="make-fail-$$(date +%s)"; \
+	code=$$(curl -sS -o /tmp/nginx-gateway-fail-response.json -w "%{http_code}" http://localhost:8080/service-a/greet-service-b -H "X-Request-ID: $$fail_id" || true); \
+	cat /tmp/nginx-gateway-fail-response.json; echo; \
+	if [ "$$code" -ge 500 ]; then echo "OK: request failed while B is down (HTTP $$code)"; else echo "UNEXPECTED: request returned HTTP $$code"; $(COMPOSE) start service-b; exit 1; fi; \
+	$(COMPOSE) logs --since 2m service-a 2>&1 | grep -q "$$fail_id" && echo "OK: failure logged by service-a ($$fail_id)" || (echo "FAIL: failure not logged ($$fail_id)" && $(COMPOSE) start service-b && exit 1)
 	@$(COMPOSE) start service-b
 	@sleep 2
-	@curl -sf http://localhost:8080/service-a/greet-service-b -H "X-Request-ID: make-recover-001" | python3 -m json.tool
+	@recover_id="make-recover-$$(date +%s)"; \
+	curl -sf http://localhost:8080/service-a/greet-service-b -H "X-Request-ID: $$recover_id"; echo
 endif
 	@echo ""
 	@echo "All Docker validation commands succeeded."

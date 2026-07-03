@@ -250,12 +250,12 @@ docker info    # should not error
 
 **Supported versions:** Use **Docker Compose V2** (`docker compose`, not the legacy `docker-compose` v1 command). Docker Engine **20.10+** and Compose plugin **2.1+** are recommended — current [Docker Desktop](https://docs.docker.com/desktop/) (macOS/Windows) or [Docker Engine](https://docs.docker.com/engine/install/) (Linux) installs satisfy this. The stack uses `depends_on` with `condition: service_healthy`, which requires Compose V2.1 or newer.
 
-You also need **Git** to clone the repository. Node.js, Nginx, and a Linux VM are **not** required on the host.
+You also need **Git** and **curl** to clone and validate the repository. `make` is optional but recommended for the one-command validation suite. Node.js, Nginx, and a Linux VM are **not** required on the host.
 
 ### Start the system
 
 ```bash
-git clone <your-repo-url> Nginx-gateway-microservices
+git clone https://github.com/marybahati/Nginx-gateway-microservices.git Nginx-gateway-microservices
 cd Nginx-gateway-microservices
 docker compose up --build -d
 docker compose ps
@@ -270,8 +270,8 @@ Each Dockerfile runs `npm ci` against that service's `package.json` **`dependenc
 ### Test the public route
 
 ```bash
-curl http://localhost:8080/service-a/health
-curl http://localhost:8080/service-a/greet-service-b
+curl -fsS http://localhost:8080/service-a/health
+curl -fsS http://localhost:8080/service-a/greet-service-b
 ```
 
 Or run all checks at once:
@@ -285,31 +285,32 @@ make test
 From the host, direct access to B and C should fail:
 
 ```bash
-curl --connect-timeout 3 http://localhost:3002/health   # connection refused
-curl --connect-timeout 3 http://localhost:3003/health     # connection refused
+curl -fsS --connect-timeout 3 http://localhost:3002/health >/dev/null 2>&1 && echo "UNEXPECTED: service-b is exposed" || echo "OK: service-b is not exposed"
+curl -fsS --connect-timeout 3 http://localhost:3003/health >/dev/null 2>&1 && echo "UNEXPECTED: service-c is exposed" || echo "OK: service-c is not exposed"
 ```
 
 From inside the network, discovery works:
 
 ```bash
-docker compose exec service-a node -e "fetch('http://service-b:3002/health').then(r=>r.json()).then(console.log)"
-docker compose exec service-b node -e "fetch('http://service-c:3003/health').then(r=>r.json()).then(console.log)"
+docker compose exec service-a node -e "fetch('http://service-b:3002/health').then(r=>r.json()).then(d=>console.log(JSON.stringify(d,null,2)))"
+docker compose exec service-b node -e "fetch('http://service-c:3003/health').then(r=>r.json()).then(d=>console.log(JSON.stringify(d,null,2)))"
 ```
 
 Nginx does not proxy B or C:
 
 ```bash
-curl http://localhost:8080/service-b/health   # 404
-curl http://localhost:8080/service-c/health   # 404
+code=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/service-b/health); [ "$code" = "404" ] && echo "OK: service-b route returns 404" || echo "UNEXPECTED: service-b route returned $code"
+code=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/service-c/health); [ "$code" = "404" ] && echo "OK: service-c route returns 404" || echo "UNEXPECTED: service-c route returned $code"
 ```
 
 ### View logs
 
 ```bash
-docker compose logs              # all services
-docker compose logs service-a    # one service
-docker compose logs -f           # follow all
-docker compose logs | grep <request-id>   # trace a request
+docker compose logs                     # all services
+docker compose logs service-a           # one service
+docker compose logs -f                  # follow all
+REQUEST_ID=demo-container-001
+docker compose logs | grep "$REQUEST_ID"   # trace a request
 ```
 
 ### Stop and restart a service
@@ -324,16 +325,24 @@ Failure test (stop B, observe error, recover):
 
 ```bash
 docker compose stop service-b
-curl -fsS http://localhost:8080/service-a/greet-service-b -H "X-Request-ID: fail-test-001"
+code=$(curl -sS -o /tmp/service-b-down.json -w "%{http_code}" http://localhost:8080/service-a/greet-service-b -H "X-Request-ID: fail-test-001" || true)
+cat /tmp/service-b-down.json; echo
+[ "$code" -ge 500 ] && echo "OK: request failed while B is down (HTTP $code)" || echo "UNEXPECTED: request returned HTTP $code"
 docker compose logs service-a | grep fail-test-001
 docker compose start service-b
-curl http://localhost:8080/service-a/greet-service-b
+curl -fsS http://localhost:8080/service-a/greet-service-b
 ```
 
 ### Shut everything down
 
 ```bash
 docker compose down
+```
+
+For the production compose file:
+
+```bash
+DOCKERHUB_USERNAME=marybahati APP_NAME=devops100 IMAGE_TAG=sha-3df3c04 docker compose -f docker-compose.prod.yml down
 ```
 
 ### Makefile shortcuts
@@ -374,17 +383,20 @@ Required GitHub settings:
 cp .env.example .env
 export DOCKERHUB_USERNAME=marybahati
 export APP_NAME=devops100
+export IMAGE_TAG=sha-3df3c04
 ./scripts/deploy.sh sha-3df3c04
 ```
 
 ### Verify
 
 ```bash
-docker compose -f docker-compose.prod.yml ps
+DOCKERHUB_USERNAME=marybahati APP_NAME=devops100 IMAGE_TAG=sha-3df3c04 docker compose -f docker-compose.prod.yml ps
 curl -fsS http://localhost:8080/service-a/health
 ```
 
 Production deployment uses `docker-compose.prod.yml`, which pulls commit-tagged images from Docker Hub and does not build locally. Do not deploy `latest`, `main`, or `dev` tags.
+
+`sha-3df3c04` is the last image tag already published to Docker Hub. After committing new source changes, publish images with the new short commit SHA and update this section so the reviewed source commit and deployed image tag match exactly.
 
 ## API contract
 
@@ -413,8 +425,12 @@ Production deployment uses `docker-compose.prod.yml`, which pulls commit-tagged 
 ## Repository structure
 
 ```
-├── docker-compose.yml        # Compose stack definition
-├── .dockerignore
+├── .github/workflows/
+│   └── container-ci-cd.yml   # PR CI, Compose verification, main-only Docker Hub publish
+├── .dockerignore             # Build context exclusions
+├── .env.example              # Non-secret production deploy variables
+├── docker-compose.yml        # Local Compose stack with build: entries
+├── docker-compose.prod.yml   # Production Compose stack with Docker Hub image: entries
 ├── Makefile                  # up, down, test, logs, etc.
 ├── docs/
 │   ├── setup-macos.md
@@ -424,14 +440,27 @@ Production deployment uses `docker-compose.prod.yml`, which pulls commit-tagged 
 ├── nginx/
 │   └── nginx-docker.conf     # Nginx config (public → Service A only)
 ├── scripts/
+│   ├── deploy.sh             # Pull and run a commit-tagged production image set
 │   ├── wait-for-deps.mjs     # Service A dependency health wait (Docker)
 │   └── wait-for-deps.sh      # Shell variant (optional reference)
 ├── shared/logger.js
 └── services/
     ├── service-a/
-    │   └── Dockerfile
+    │   ├── Dockerfile
+    │   ├── index.js
+    │   ├── package.json
+    │   ├── package-lock.json
+    │   └── test/health.test.js
     ├── service-b/
-    │   └── Dockerfile
+    │   ├── Dockerfile
+    │   ├── index.js
+    │   ├── package.json
+    │   ├── package-lock.json
+    │   └── test/health.test.js
     └── service-c/
-        └── Dockerfile
+        ├── Dockerfile
+        ├── index.js
+        ├── package.json
+        ├── package-lock.json
+        └── test/health.test.js
 ```

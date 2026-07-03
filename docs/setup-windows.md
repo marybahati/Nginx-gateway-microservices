@@ -13,6 +13,7 @@ Goal: run the full Nginx gateway microservices stack on Windows using Docker Com
 | RAM | 4 GB free |
 | Disk | 5 GB free for images |
 | Windows | 10 (build 19041+) or 11 |
+| Tools | Git for Windows and curl.exe; WSL/Git Bash only if you want to run `make test` |
 
 Confirm virtualization: Task Manager → Performance → CPU → "Virtualization: Enabled".
 
@@ -40,9 +41,8 @@ Use PowerShell or Git Bash:
 ```powershell
 New-Item -ItemType Directory -Force -Path $HOME\nginx-microservices
 cd $HOME\nginx-microservices
-git clone <your-repo-url> Nginx-gateway-microservices
+git clone https://github.com/marybahati/Nginx-gateway-microservices.git Nginx-gateway-microservices
 cd Nginx-gateway-microservices
-git checkout feat/docker
 ```
 
 ## 4. Start the system
@@ -63,24 +63,24 @@ curl.exe -fsS http://localhost:8080/service-a/health
 curl.exe -fsS http://localhost:8080/service-a/greet-service-b
 ```
 
-Or use WSL / Git Bash with the Makefile (requires `make`):
+Or use WSL / Git Bash with the Makefile (requires `make` and Unix tools):
 
 ```bash
 make test
 ```
 
-Without `make`, run the equivalent checks manually (see [docs/CONTAINER_VALIDATION.md](CONTAINER_VALIDATION.md)).
+Without `make`, run the equivalent PowerShell checks manually. The full validation checklist in [docs/CONTAINER_VALIDATION.md](CONTAINER_VALIDATION.md) uses Unix shell syntax, so run it from WSL/Git Bash on Windows.
 
 Manual checks:
 
 ```powershell
 # B and C are NOT reachable from the host
-curl.exe -fsS --connect-timeout 3 http://localhost:3002/health
-curl.exe -fsS --connect-timeout 3 http://localhost:3003/health
+curl.exe -fsS --connect-timeout 3 http://localhost:3002/health *> $null; if ($LASTEXITCODE -eq 0) { "UNEXPECTED: service-b is exposed" } else { "OK: service-b is not exposed" }
+curl.exe -fsS --connect-timeout 3 http://localhost:3003/health *> $null; if ($LASTEXITCODE -eq 0) { "UNEXPECTED: service-c is exposed" } else { "OK: service-c is not exposed" }
 
 # Internal discovery
-docker compose exec service-a node -e "fetch('http://service-b:3002/health').then(r=>r.json()).then(console.log)"
-docker compose exec service-b node -e "fetch('http://service-c:3003/health').then(r=>r.json()).then(console.log)"
+docker compose exec service-a node -e "fetch('http://service-b:3002/health').then(r=>r.json()).then(d=>console.log(JSON.stringify(d,null,2)))"
+docker compose exec service-b node -e "fetch('http://service-c:3003/health').then(r=>r.json()).then(d=>console.log(JSON.stringify(d,null,2)))"
 
 # Trace one request
 curl.exe -fsS http://localhost:8080/service-a/greet-service-b -H "X-Request-ID: demo-container-001"
@@ -104,7 +104,9 @@ docker compose down
 
 ```powershell
 docker compose stop service-b
-curl.exe -fsS http://localhost:8080/service-a/greet-service-b -H "X-Request-ID: fail-service-b-001"
+$code = curl.exe -sS -o "$env:TEMP\service-b-down.json" -w "%{http_code}" http://localhost:8080/service-a/greet-service-b -H "X-Request-ID: fail-service-b-001"
+Get-Content "$env:TEMP\service-b-down.json"
+if ([int]$code -ge 500) { "OK: request failed while B is down (HTTP $code)" } else { "UNEXPECTED: request returned HTTP $code" }
 docker compose logs service-a
 
 docker compose start service-b

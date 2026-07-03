@@ -13,6 +13,7 @@ Goal: run the full Nginx gateway microservices stack on your Linux machine using
 | RAM | 4 GB free |
 | Disk | 5 GB free for images |
 | Distro | Any modern Linux — Ubuntu, Fedora, Arch, Debian, etc. |
+| Tools | Git, curl, grep, and make |
 
 ## 2. Install Docker Engine + Compose
 
@@ -21,6 +22,7 @@ Goal: run the full Nginx gateway microservices stack on your Linux machine using
 ```bash
 sudo apt-get update
 sudo apt-get install -y docker.io docker-compose-v2
+sudo systemctl enable --now docker
 sudo usermod -aG docker $USER
 newgrp docker
 docker --version
@@ -34,6 +36,8 @@ sudo dnf install -y docker docker-compose
 sudo systemctl enable --now docker
 sudo usermod -aG docker $USER
 newgrp docker
+docker --version
+docker compose version
 ```
 
 Official install guide (all distros): https://docs.docker.com/engine/install/
@@ -45,9 +49,8 @@ Use **Docker Engine 20.10+** with the **Compose V2 plugin** (`docker compose`, n
 ```bash
 mkdir -p ~/nginx-microservices
 cd ~/nginx-microservices
-git clone <your-repo-url> Nginx-gateway-microservices
+git clone https://github.com/marybahati/Nginx-gateway-microservices.git Nginx-gateway-microservices
 cd Nginx-gateway-microservices
-git checkout feat/docker    # or your Docker branch
 ```
 
 ## 4. Start the system
@@ -72,12 +75,12 @@ curl -fsS http://localhost:8080/service-a/health
 curl -fsS http://localhost:8080/service-a/greet-service-b
 
 # B and C are NOT reachable from the host
-curl -fsS --connect-timeout 3 http://localhost:3002/health
-curl -fsS --connect-timeout 3 http://localhost:3003/health
+curl -fsS --connect-timeout 3 http://localhost:3002/health >/dev/null 2>&1 && echo "UNEXPECTED: service-b is exposed" || echo "OK: service-b is not exposed"
+curl -fsS --connect-timeout 3 http://localhost:3003/health >/dev/null 2>&1 && echo "UNEXPECTED: service-c is exposed" || echo "OK: service-c is not exposed"
 
 # Internal discovery
-docker compose exec service-a node -e "fetch('http://service-b:3002/health').then(r=>r.json()).then(console.log)"
-docker compose exec service-b node -e "fetch('http://service-c:3003/health').then(r=>r.json()).then(console.log)"
+docker compose exec service-a node -e "fetch('http://service-b:3002/health').then(r=>r.json()).then(d=>console.log(JSON.stringify(d,null,2)))"
+docker compose exec service-b node -e "fetch('http://service-c:3003/health').then(r=>r.json()).then(d=>console.log(JSON.stringify(d,null,2)))"
 
 # Trace one request
 curl -fsS http://localhost:8080/service-a/greet-service-b -H "X-Request-ID: demo-container-001"
@@ -102,7 +105,9 @@ make test
 
 ```bash
 docker compose stop service-b
-curl -fsS http://localhost:8080/service-a/greet-service-b -H "X-Request-ID: fail-service-b-001"
+code=$(curl -sS -o /tmp/service-b-down.json -w "%{http_code}" http://localhost:8080/service-a/greet-service-b -H "X-Request-ID: fail-service-b-001" || true)
+cat /tmp/service-b-down.json; echo
+[ "$code" -ge 500 ] && echo "OK: request failed while B is down (HTTP $code)" || echo "UNEXPECTED: request returned HTTP $code"
 docker compose logs service-a | grep fail-service-b-001
 
 docker compose start service-b
