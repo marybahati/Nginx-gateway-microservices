@@ -1,5 +1,6 @@
 services:
   service-b:
+    image: nginx-gateway-microservices-service-b:local
     build:
       context: .
       dockerfile: services/service-b/Dockerfile
@@ -29,6 +30,7 @@ services:
       - private
 
   service-c:
+    image: nginx-gateway-microservices-service-c:local
     build:
       context: .
       dockerfile: services/service-c/Dockerfile
@@ -58,6 +60,7 @@ services:
       - private
 
   service-a:
+    image: nginx-gateway-microservices-service-a:local
     build:
       context: .
       dockerfile: services/service-a/Dockerfile
