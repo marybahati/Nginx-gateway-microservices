@@ -52,6 +52,8 @@ jobs:
         run: npm run build --if-present
 
       - name: Build Docker image locally
+        # Context is the repo root, not matrix.path, because each Dockerfile
+        # COPYs shared/ and scripts/wait-for-deps.mjs from outside its service dir.
         run: |
           docker build \
             --pull \
@@ -122,6 +124,7 @@ jobs:
         run: echo "short_sha=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
 
       - name: Build and push image
+        # Context is the repo root (see verify job) so shared/ and scripts/ are in scope.
         uses: docker/build-push-action@v6
         with:
           context: .
