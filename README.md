@@ -347,10 +347,71 @@ curl -fsS http://localhost:8080/service-a/greet-service-b
 docker compose down
 ```
 
-For the production compose file:
+### Production compose environment variables
+
+The production compose file expects three variables:
+
+- `DOCKERHUB_USERNAME`
+- `APP_NAME`
+- `IMAGE_TAG`
+
+Set them before running `docker compose -f docker-compose.prod.yml ...`.
+
+#### macOS & Linux (Bash / Zsh)
+
+Inline one-liner:
 
 ```bash
 DOCKERHUB_USERNAME=warga24 APP_NAME=devops100 IMAGE_TAG=v1 docker compose -f docker-compose.prod.yml down
+```
+
+Persistent session:
+
+```bash
+export DOCKERHUB_USERNAME="warga24"
+export APP_NAME="devops100"
+export IMAGE_TAG="v1"
+docker compose -f docker-compose.prod.yml up -d --remove-orphans
+```
+
+#### Windows PowerShell
+
+Inline one-liner:
+
+```powershell
+$env:DOCKERHUB_USERNAME="warga24"; $env:APP_NAME="devops100"; $env:IMAGE_TAG="v1"; docker compose -f docker-compose.prod.yml down
+```
+
+Persistent session:
+
+```powershell
+$env:DOCKERHUB_USERNAME="warga24"
+$env:APP_NAME="devops100"
+$env:IMAGE_TAG="v1"
+docker compose -f docker-compose.prod.yml up -d --remove-orphans
+```
+
+#### Windows Git Bash / WSL
+
+```bash
+DOCKERHUB_USERNAME=warga24 APP_NAME=devops100 IMAGE_TAG=v1 docker compose -f docker-compose.prod.yml down
+```
+
+#### Windows Command Prompt (`cmd.exe`)
+
+Inline one-liner:
+
+```bat
+set DOCKERHUB_USERNAME=warga24 & set APP_NAME=devops100 & set IMAGE_TAG=v1 & docker compose -f docker-compose.prod.yml down
+```
+
+Persistent session:
+
+```bat
+set DOCKERHUB_USERNAME=warga24
+set APP_NAME=devops100
+set IMAGE_TAG=v1
+docker compose -f docker-compose.prod.yml down
 ```
 
 ### Makefile shortcuts
