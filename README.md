@@ -350,7 +350,7 @@ docker compose down
 For the production compose file:
 
 ```bash
-DOCKERHUB_USERNAME=marybahati APP_NAME=devops100 IMAGE_TAG=sha-3df3c04 docker compose -f docker-compose.prod.yml down
+DOCKERHUB_USERNAME=warga24 APP_NAME=devops100 IMAGE_TAG=v1 docker compose -f docker-compose.prod.yml down
 ```
 
 ### Makefile shortcuts
