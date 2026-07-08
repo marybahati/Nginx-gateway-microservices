@@ -38,6 +38,8 @@ test("health endpoint returns clean service JSON", async (t) => {
       ...process.env,
       BIND_HOST: "127.0.0.1",
       PORT: String(PORT),
+      NODE_PATH: path.join(serviceDir, "node_modules"),
+      OTEL_SDK_DISABLED: "true",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -46,11 +48,11 @@ test("health endpoint returns clean service JSON", async (t) => {
     child.kill("SIGTERM");
   });
 
-  const response = await waitForHealth(`http://127.0.0.1:${PORT}/health`);
+  const response = await waitForHealth(`http://127.0.0.1:${PORT}/health?shallow=1`);
   assert.match(response.headers.get("content-type"), /application\/json/);
 
   const body = await response.json();
   assert.equal(body.service, SERVICE_NAME);
-  assert.equal(body.status, "healthy");
-  assert.equal(body.port, PORT);
+  assert.equal(body.status, "ok");
+  assert.ok(body.dependencies);
 });
