@@ -33,7 +33,7 @@ Works the same on **macOS, Linux, and Windows** (Docker Desktop required on Mac/
 | Grafana | http://localhost:3030 | Operating view (admin/admin) |
 | Prometheus | http://localhost:9090 | Metrics and alerts |
 | Jaeger | http://localhost:16686 | Distributed traces |
-| Loki | http://localhost:3100 | Log API (view in Grafana) |
+| Loki | http://localhost:3100/ready | Log API — no web UI; use `/ready` to verify, view logs in Grafana |
 
 ### 1. Start and verify
 
@@ -41,7 +41,10 @@ Works the same on **macOS, Linux, and Windows** (Docker Desktop required on Mac/
 docker compose up --build -d
 docker compose ps
 curl -fsS http://localhost:8080/service-a/health
+curl -fsS http://localhost:3100/ready    # Loki health (prints "ready")
 ```
+
+**Loki note:** `http://localhost:3100/` returns **404** in a browser — that is normal. Loki is an API, not a dashboard. Use `http://localhost:3100/ready` to confirm it is up, then view logs in Grafana.
 
 ### 2. Send a successful request
 
@@ -54,6 +57,7 @@ curl -fsS http://localhost:8080/service-a/greet-service-b -H "X-Request-ID: demo
 - **Metrics:** Grafana dashboard **MELT Operating View** or Prometheus graph `rate(http_requests_total[1m])`
 - **Traces:** Jaeger → Service `service-a` → Find Traces
 - **Logs:** `docker compose logs service-a` or Grafana Explore → Loki → `{service="service-a"}`
+  - Verify Loki is ingesting: `curl -G -s "http://localhost:3100/loki/api/v1/labels"` (should list `service`, `level`, etc.)
 
 ### 4. Run load test (one command)
 
@@ -99,7 +103,7 @@ More detail: [docs/architecture.md](docs/architecture.md), [docs/benchmark-repor
 
 | Tool | Problem it solves | Data collected | Where to view |
 |---|---|---|---|
-| **Loki** | Central log storage | JSON container logs | Grafana → Explore / dashboard log panel |
+| **Loki** | Central log storage | JSON container logs | Grafana → Explore / dashboard log panel. Health check: `curl http://localhost:3100/ready` (not `http://localhost:3100/`) |
 | **Promtail** | Ships Docker logs to Loki | stdout/stderr from Compose services | Grafana (via Loki) |
 
 ## Alert reference

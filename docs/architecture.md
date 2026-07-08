@@ -31,7 +31,7 @@ Client / load test
 | prometheus | 9090 | `localhost:9090` | Metrics storage and alerts |
 | grafana | 3000 | `localhost:3030` | Operating view |
 | jaeger | 16686 | `localhost:16686` | Trace UI |
-| loki | 3100 | `localhost:3100` | Log storage |
+| loki | 3100 | `http://localhost:3100/ready` | Log storage (API only — no browser UI; view logs in Grafana) |
 | promtail | 9080 | internal | Ships container logs to Loki |
 
 ## Request flow
