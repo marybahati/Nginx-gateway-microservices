@@ -1,6 +1,6 @@
 # Nginx Gateway Microservices
 
-A production-style microservice environment: three Node.js HTTP services behind an Nginx reverse proxy, with service discovery, structured logging, request tracing, and network isolation for internal services.
+A production-style microservice environment: three Node.js HTTP services behind an Nginx reverse proxy, with a full **MELT** observability layer (Metrics, Events, Logs, Traces) using Prometheus, Grafana, Jaeger, Loki, and Promtail.
 
 Only **Service A** is publicly reachable through Nginx. Services B and C are internal infrastructure.
 
@@ -14,15 +14,186 @@ Only **Service A** is publicly reachable through Nginx. Services B and C are int
 
 See [Running with Docker Compose](#running-with-docker-compose) for start commands.
 
+## Table of Contents
+
+- [Quick start](#quick-start)
+- [Observability quick start (Saturday demo flow)](#observability-quick-start-saturday-demo-flow)
+  - [1. Start and verify](#1-start-and-verify)
+  - [2. Send a successful request](#2-send-a-successful-request)
+  - [3. View signals](#3-view-signals)
+  - [4. Run load test (one command)](#4-run-load-test-one-command)
+  - [5. Trigger controlled failures](#5-trigger-controlled-failures)
+  - [6. Confirm alerts](#6-confirm-alerts)
+- [Optional tools added (Loki + Promtail only)](#optional-tools-added-loki--promtail-only)
+- [Alert reference](#alert-reference)
+  - [ServiceDown](#servicedown)
+  - [HighErrorRate](#higherrorrate)
+  - [HighLatencyP95](#highlatencyp95)
+- [System architecture](#system-architecture)
+  - [High-level view](#high-level-view)
+  - [Container startup order](#container-startup-order)
+  - [End-to-end request flow](#end-to-end-request-flow)
+  - [Inner workings by component](#inner-workings-by-component)
+    - [Nginx (gateway)](#nginx-gateway)
+    - [Service A (orchestrator)](#service-a-orchestrator)
+    - [Service B (relay)](#service-b-relay)
+    - [Service C (processor + callback)](#service-c-processor--callback)
+    - [Service discovery](#service-discovery)
+    - [Request tracing](#request-tracing)
+    - [Logging](#logging)
+  - [Network isolation](#network-isolation)
+  - [Failure and recovery](#failure-and-recovery)
+- [Running with Docker Compose](#running-with-docker-compose)
+  - [Prerequisites](#prerequisites)
+  - [Start the system](#start-the-system)
+  - [Test the public route](#test-the-public-route)
+  - [Prove B and C are internal](#prove-b-and-c-are-internal)
+  - [View logs](#view-logs)
+  - [Stop and restart a service](#stop-and-restart-a-service)
+  - [Shut everything down](#shut-everything-down)
+  - [Production compose environment variables](#production-compose-environment-variables)
+    - [macOS & Linux (Bash / Zsh)](#macos--linux-bash--zsh)
+    - [Windows PowerShell](#windows-powershell)
+    - [Windows Git Bash / WSL](#windows-git-bash--wsl)
+    - [Windows Command Prompt (`cmd.exe`)](#windows-command-prompt-cmdexe)
+  - [Makefile shortcuts](#makefile-shortcuts)
+- [Container CI/CD Deployment](#container-cicd-deployment)
+  - [Latest Deployed Version](#latest-deployed-version)
+  - [Deploy](#deploy)
+  - [Verify](#verify)
+- [API contract](#api-contract)
+  - [Service A (`service-a`, port 3001)](#service-a-service-a-port-3001)
+  - [Service B (`service-b`, port 3002, internal)](#service-b-service-b-port-3002-internal)
+  - [Service C (`service-c`, port 3003, internal)](#service-c-service-c-port-3003-internal)
+- [Repository structure](#repository-structure)
+
 ## Quick start
 
 1. Install Docker and ensure the daemon is running.
 2. Clone the repository and change into it.
 3. Start the stack with `docker compose up --build -d`.
 4. Check the public health endpoint at `http://localhost:8080/service-a/health`.
-5. Run `make test` for a full validation pass.
+5. Open Grafana at `http://localhost:3030` (login `admin` / `admin`). If port 3030 is busy on your machine, change the host port in `docker-compose.yml` under `grafana.ports`.
+6. Run `make test` for application validation and `make melt-test` for observability checks.
 
-## Project overview
+## Observability quick start (Saturday demo flow)
+
+Works the same on **macOS, Linux, and Windows** (Docker Desktop required on Mac/Windows).
+
+| Tool | URL | Purpose |
+|---|---|---|
+| App gateway | http://localhost:8080 | Send requests |
+| Grafana | http://localhost:3030 | Operating view (admin/admin) |
+| Prometheus | http://localhost:9090 | Metrics and alerts |
+| Jaeger | http://localhost:16686 | Distributed traces |
+| Loki | http://localhost:3100 | Log API (view in Grafana) |
+
+### 1. Start and verify
+
+```bash
+docker compose up --build -d
+docker compose ps
+curl -fsS http://localhost:8080/service-a/health
+```
+
+### 2. Send a successful request
+
+```bash
+curl -fsS http://localhost:8080/service-a/greet-service-b -H "X-Request-ID: demo-success-1"
+```
+
+### 3. View signals
+
+- **Metrics:** Grafana dashboard **MELT Operating View** or Prometheus graph `rate(http_requests_total[1m])`
+- **Traces:** Jaeger → Service `service-a` → Find Traces
+- **Logs:** `docker compose logs service-a` or Grafana Explore → Loki → `{service="service-a"}`
+
+### 4. Run load test (one command)
+
+```bash
+node scripts/load-test.js
+```
+
+On Windows without Node on the host, use Git Bash:
+
+```bash
+bash scripts/load-test.sh
+```
+
+### 5. Trigger controlled failures
+
+**High latency (lab only):**
+
+```bash
+curl -fsS http://localhost:8080/service-a/lab/slow -H "X-Request-ID: demo-slow-1"
+```
+
+**High error rate (lab only):**
+
+```bash
+curl -fsS http://localhost:8080/service-a/lab/fail -H "X-Request-ID: demo-fail-1"
+```
+
+**Service down:**
+
+```bash
+docker compose stop service-b
+curl -sS -o /tmp/out.json -w "HTTP %{http_code}\n" http://localhost:8080/service-a/greet-service-b
+docker compose start service-b
+```
+
+### 6. Confirm alerts
+
+Open http://localhost:9090/alerts after a failure. See [Alert reference](#alert-reference) below.
+
+More detail: [docs/architecture.md](docs/architecture.md), [docs/benchmark-report.md](docs/benchmark-report.md), [jaeger/README.md](jaeger/README.md).
+
+## Optional tools added (Loki + Promtail only)
+
+| Tool | Problem it solves | Data collected | Where to view |
+|---|---|---|---|
+| **Loki** | Central log storage | JSON container logs | Grafana → Explore / dashboard log panel |
+| **Promtail** | Ships Docker logs to Loki | stdout/stderr from Compose services | Grafana (via Loki) |
+
+## Alert reference
+
+Full rules: [alert-rules.yml](alert-rules.yml). Each alert is documented below with its condition, meaning, causes specific to this stack, reproduction steps, first checks, and how to confirm recovery.
+
+### ServiceDown
+
+- **PromQL:** `up{job=~"service-a|service-b|service-c"} == 0` for `1m`
+- **What it means:** Prometheus could not scrape that service's `/metrics` endpoint for a full minute.
+- **Possible causes:** the container was stopped (`docker compose stop <service>` / `make stop-service`); the Node process crashed (e.g. an unhandled promise rejection — see the `downstream_timeout` crash bug fixed in `service-a`); or the container is still blocked inside `wait-for-deps.mjs`, waiting on a dependency's `/health` that isn't responding yet.
+- **How to reproduce:** `docker compose stop service-b` and wait 1+ minute.
+- **First checks:**
+  1. `docker compose ps` — check status and uptime. A container with very low uptime, while nothing else was manually stopped, points to a crash-restart, not a deliberate stop.
+  2. `docker compose logs <service> --tail 50` — a stack trace, or repeating `Waiting for http://...` lines, confirms a crash-restart loop.
+  3. `curl http://localhost:9090/api/v1/targets` — confirms which job shows `"health":"down"`.
+- **Confirm normal:** `docker compose start service-b`; `up{job="service-b"}` returns to `1` and the alert returns to `inactive` within one scrape + evaluation cycle (~15–30s after the process is actually listening).
+
+### HighErrorRate
+
+- **PromQL:** `sum by (service) (rate(http_errors_total[2m])) > 0.1` for `2m`
+- **What it means:** a service's 5xx rate has averaged above 0.1 req/s for 2 minutes.
+- **Possible causes:** the lab-only `/fail` endpoint being hit directly on service-b or service-c, or `/lab/fail` on service-a (which calls service-c's `/fail`); or a genuine downstream failure — e.g. service-b's `/greet` failing because service-c is unreachable, logged with `event: "request_failed"`.
+- **How to reproduce:** loop `curl http://localhost:8080/service-a/lab/fail`, or run the failure scenario in `node scripts/load-test.js`.
+- **First checks:**
+  1. Grafana "Error Rate" panel — identifies which service.
+  2. `docker compose logs <service> | grep '"level":"error"'` — the logged `error` field and `request_id`.
+  3. Jaeger — find the trace for that `request_id` and inspect the failed span.
+- **Confirm normal:** stop the failure traffic; `rate(http_errors_total[2m])` falls back under `0.1` within ~2 minutes (the rate window).
+
+### HighLatencyP95
+
+- **PromQL:** `histogram_quantile(0.95, sum by (service, le) (rate(http_request_duration_seconds_bucket[5m]))) > 0.5` for `2m`
+- **What it means:** p95 request duration for a service has stayed above 500ms for 2 minutes.
+- **Possible causes:** the lab-only `/slow` endpoint (service-b's `SLOW_DELAY_MS`, default 2000ms) being hit directly or via `/lab/slow`; or `/health` blocking on a downstream dependency check — `shared/health.js` waits up to 2000ms (`AbortSignal.timeout(2000)`) per dependency when that dependency is unreachable, which we've confirmed inflates `/health` latency to ~2s during an outage.
+- **How to reproduce:** loop `curl http://localhost:8080/service-a/lab/slow`, or run the stress scenario in `node scripts/load-test.js`.
+- **First checks:**
+  1. Grafana "p95 Latency" panel — identifies which service.
+  2. Jaeger — find the slow trace and see which span/hop accounts for most of the duration.
+- **Confirm normal:** stop the slow traffic; p95 drops back under 500ms within ~5 minutes (the rate window length).
+
 
 The system demonstrates operational patterns used in production:
 
@@ -31,8 +202,7 @@ The system demonstrates operational patterns used in production:
 - **Reverse proxy** — Nginx is the sole public entry point
 - **Network security** — internal services are reachable only inside the Docker network
 - **Dependency management** — Service A waits for B and C to be healthy before starting
-- **Structured logging** — JSON logs to stdout/stderr, viewable with `docker compose logs`
-- **Request tracing** — a single `X-Request-ID` propagates through every hop
+- **MELT observability** — Prometheus metrics, Jaeger traces, Loki logs, Grafana dashboard, alert rules
 
 ## System architecture
 
@@ -421,7 +591,8 @@ make up          # build and start
 make down        # stop and remove
 make ps          # container status
 make logs        # follow logs
-make test        # run full 7-test validation
+make test        # run application validation (7 tests)
+make melt-test   # run observability validation
 make restart     # restart all services
 ```
 
@@ -473,23 +644,32 @@ Production deployment uses `docker-compose.prod.yml`, which pulls version-tagged
 
 | Method | Path | Response |
 |---|---|---|
-| GET | `/health` | `{ "service": "service-a", "status": "healthy", "port": 3001, "message": "..." }` |
+| GET | `/health` | `{ "service": "service-a", "status": "ok", "dependencies": { "service-b": "ok", "service-c": "ok" } }` |
+| GET | `/metrics` | Prometheus metrics |
 | GET | `/greet-service-b` | `{ "request_id": "...", "status": "success", "message": "Request completed successfully" }` |
+| GET | `/lab/slow` | Lab-only — triggers `service-b /slow` |
+| GET | `/lab/fail` | Lab-only — triggers `service-c /fail` |
 | POST | `/greeting-rcvd` | `{ "status": "received" }` — callback from Service C |
 
 ### Service B (`service-b`, port 3002, internal)
 
 | Method | Path | Response |
 |---|---|---|
-| GET | `/health` | `{ "service": "service-b", "status": "healthy", "port": 3002, "message": "..." }` |
+| GET | `/health` | `{ "service": "service-b", "status": "ok", "dependencies": { "service-c": "ok" } }` |
+| GET | `/metrics` | Prometheus metrics |
 | GET | `/greet` | `{ "request_id": "...", "status": "forwarded", "target": "service-c" }` — requires `X-Request-ID` |
+| GET | `/slow` | Lab-only slow endpoint |
+| GET | `/fail` | Lab-only error endpoint |
 
 ### Service C (`service-c`, port 3003, internal)
 
 | Method | Path | Response |
 |---|---|---|
-| GET | `/health` | `{ "service": "service-c", "status": "healthy", "port": 3003, "message": "..." }` |
+| GET | `/health` | `{ "service": "service-c", "status": "ok", "dependencies": {} }` |
+| GET | `/metrics` | Prometheus metrics |
 | GET | `/greet-c` | `{ "request_id": "...", "status": "processed", "callback_sent": true }` — requires `X-Request-ID` |
+| GET | `/slow` | Lab-only slow endpoint |
+| GET | `/fail` | Lab-only error endpoint |
 
 ## Repository structure
 
@@ -498,10 +678,20 @@ Production deployment uses `docker-compose.prod.yml`, which pulls version-tagged
 │   └── container-ci-cd.yml   # PR CI, Compose verification, main-only Docker Hub publish
 ├── .dockerignore             # Build context exclusions
 ├── .env.example              # Non-secret production deploy variables
+├── alert-rules.yml           # Prometheus alert rules
+├── prometheus.yml            # Prometheus scrape config
 ├── docker-compose.yml        # Local Compose stack with build: entries
 ├── docker-compose.prod.yml   # Production Compose stack with Docker Hub image: entries
-├── Makefile                  # up, down, test, logs, etc.
+├── grafana/
+│   ├── dashboards/           # MELT Operating View dashboard
+│   └── provisioning/         # Grafana datasources + dashboard provisioning
+├── jaeger/README.md          # Jaeger usage guide
+├── loki/loki-config.yml
+├── promtail/promtail-config.yml
+├── Makefile                  # up, down, test, melt-test, logs, etc.
 ├── docs/
+│   ├── architecture.md       # Request + telemetry flows
+│   ├── benchmark-report.md   # Load test results template
 │   ├── setup-macos.md
 │   ├── setup-linux.md
 │   ├── setup-windows.md
@@ -510,9 +700,16 @@ Production deployment uses `docker-compose.prod.yml`, which pulls version-tagged
 │   └── nginx-docker.conf     # Nginx config (public → Service A only)
 ├── scripts/
 │   ├── deploy.sh             # Pull and run a commit-tagged production image set
+│   ├── load-test.js          # Repeatable MELT load test (Node)
+│   ├── load-test.sh          # Repeatable MELT load test (bash)
 │   ├── wait-for-deps.mjs     # Service A dependency health wait (Docker)
 │   └── wait-for-deps.sh      # Shell variant (optional reference)
-├── shared/logger.js
+├── shared/
+│   ├── logger.js
+│   ├── metrics.js
+│   ├── middleware.js
+│   ├── tracing.js
+│   └── health.js
 └── services/
     ├── service-a/
     │   ├── Dockerfile
