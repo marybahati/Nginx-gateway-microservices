@@ -77,15 +77,13 @@ jobs:
         run: docker compose build --pull
 
       - name: Start Compose stack
-        run: docker compose up -d
+        run: docker compose up -d --wait
 
       - name: Show running services
         run: docker compose ps
 
       - name: Check gateway health
-        run: |
-          sleep 10
-          curl --fail --silent --show-error http://localhost:8080/service-a/health | python3 -m json.tool
+        run: curl --fail --silent --show-error http://localhost:8080/service-a/health | python3 -m json.tool
 
       - name: Stop Compose stack
         if: always()
