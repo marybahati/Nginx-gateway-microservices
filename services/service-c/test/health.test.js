@@ -5,6 +5,7 @@ const test = require("node:test");
 
 const SERVICE_NAME = "service-c";
 const PORT = 3103;
+const PORT2 = 3113;
 
 function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -29,14 +30,7 @@ function spawnService(env = {}) {
   const serviceDir = path.resolve(__dirname, "..");
   return spawn(process.execPath, ["index.js"], {
     cwd: serviceDir,
-    env: {
-      ...process.env,
-      BIND_HOST: "127.0.0.1",
-      PORT: String(PORT),
-      NODE_PATH: path.join(serviceDir, "node_modules"),
-      OTEL_SDK_DISABLED: "true",
-      ...env
-    },
+    env: { ...process.env, BIND_HOST: "127.0.0.1", PORT: String(PORT), OTEL_SDK_DISABLED: "true", NODE_PATH: path.join(serviceDir, "node_modules"), ...env },
     stdio: ["ignore", "pipe", "pipe"],
   });
 }
@@ -54,11 +48,11 @@ test("health endpoint returns clean service JSON", async (t) => {
 });
 
 test("greet-c returns 500 when service-a callback is unreachable", async (t) => {
-  const child = spawnService({ SERVICE_A_CALLBACK_URL: "http://127.0.0.1:3199" });
+  const child = spawnService({ PORT: String(PORT2), SERVICE_A_CALLBACK_URL: "http://127.0.0.1:3199" });
   t.after(() => child.kill("SIGTERM"));
 
-  await waitForHealth(`http://127.0.0.1:${PORT}/health`);
-  const response = await fetch(`http://127.0.0.1:${PORT}/greet-c`, {
+  await waitForHealth(`http://127.0.0.1:${PORT2}/health`);
+  const response = await fetch(`http://127.0.0.1:${PORT2}/greet-c`, {
     headers: { "X-Request-ID": "test-fail-c-001" },
   });
   assert.equal(response.status, 500);
