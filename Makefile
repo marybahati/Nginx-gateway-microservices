@@ -5,7 +5,7 @@ SHELL := /bin/bash
 
 COMPOSE := docker compose
 
-.PHONY: help up down ps logs restart stop-service start-service test lint \
+.PHONY: help up down ps logs restart stop-service start-service test melt-test lint \
         docker-up docker-down docker-ps docker-logs docker-test docker-restart docker-stop-service docker-start-service
 
 help:  ## Show this help.
@@ -32,10 +32,13 @@ stop-service:  ## Stop one service (usage: make stop-service SVC=service-b).
 start-service:  ## Start one service (usage: make start-service SVC=service-b).
 	$(COMPOSE) start $(SVC)
 
-test:  ## Run all Docker validation checks (full 7-test suite).
-	@echo "=== [1/7] Containers running ==="
-	@count=$$($(COMPOSE) ps --status running -q | wc -l | tr -d ' '); \
-	if [ "$$count" -eq 4 ]; then echo "OK: all four services running"; else echo "FAIL: expected 4 running containers, got $$count"; $(COMPOSE) ps; exit 1; fi
+test:  ## Run application validation checks (7 tests).
+	@echo "=== [1/7] Application containers running ==="
+	@for svc in service-a service-b service-c nginx; do \
+	  if [ -z "$$($(COMPOSE) ps --status running -q $$svc)" ]; then \
+	    echo "FAIL: $$svc is not running"; $(COMPOSE) ps; exit 1; \
+	  fi; \
+	done; echo "OK: service-a, service-b, service-c, nginx are running"
 	@echo ""
 	@echo "=== [2/7] Service A via Nginx (:8080) ==="
 	@curl -sf http://localhost:8080/service-a/health; echo
@@ -79,6 +82,36 @@ else
 endif
 	@echo ""
 	@echo "All Docker validation commands succeeded."
+
+melt-test:  ## Run observability validation (Prometheus, Grafana, Jaeger, metrics, traces).
+	@echo "=== [1/6] Observability containers running ==="
+	@for svc in prometheus grafana jaeger loki promtail; do \
+	  if [ -z "$$($(COMPOSE) ps --status running -q $$svc)" ]; then \
+	    echo "FAIL: $$svc is not running"; $(COMPOSE) ps; exit 1; \
+	  fi; \
+	done; echo "OK: prometheus, grafana, jaeger, loki, promtail are running"
+	@echo ""
+	@echo "=== [2/6] Prometheus targets healthy ==="
+	@curl -sf http://localhost:9090/-/ready >/dev/null
+	@curl -sf http://localhost:9090/api/v1/targets | grep -q '"health":"up"' && echo "OK: at least one Prometheus target is up" || (echo "FAIL: no healthy Prometheus targets" && exit 1)
+	@echo ""
+	@echo "=== [3/6] Grafana ready ==="
+	@curl -sf http://localhost:3030/api/health | grep -q '"database": "ok"' && echo "OK: Grafana is healthy" || (echo "FAIL: Grafana health check failed" && exit 1)
+	@echo ""
+	@echo "=== [4/6] Jaeger ready ==="
+	@curl -sf http://localhost:16686 >/dev/null && echo "OK: Jaeger UI reachable"
+	@echo ""
+	@echo "=== [5/6] Service metrics endpoints ==="
+	@$(COMPOSE) exec -T service-a node -e "fetch('http://127.0.0.1:3001/metrics').then(r=>r.text()).then(t=>process.exit(t.includes('http_requests_total')?0:1)).catch(()=>process.exit(1))" && echo "OK: service-a /metrics"
+	@$(COMPOSE) exec -T service-b node -e "fetch('http://127.0.0.1:3002/metrics').then(r=>r.text()).then(t=>process.exit(t.includes('http_requests_total')?0:1)).catch(()=>process.exit(1))" && echo "OK: service-b /metrics"
+	@$(COMPOSE) exec -T service-c node -e "fetch('http://127.0.0.1:3003/metrics').then(r=>r.text()).then(t=>process.exit(t.includes('http_requests_total')?0:1)).catch(()=>process.exit(1))" && echo "OK: service-c /metrics"
+	@echo ""
+	@echo "=== [6/6] Trace-producing request ==="
+	@trace_id="melt-trace-$$(date +%s)"; \
+	curl -sS --max-time 30 http://localhost:8080/service-a/greet-service-b -H "X-Request-ID: $$trace_id"; echo; \
+	$(COMPOSE) logs --since 2m service-a 2>&1 | grep -q "$$trace_id" && echo "OK: correlated logs found ($$trace_id)" || (echo "FAIL: trace request not found in logs" && exit 1)
+	@echo ""
+	@echo "All observability validation commands succeeded."
 
 docker-up: up  ## Alias for make up.
 docker-down: down  ## Alias for make down.

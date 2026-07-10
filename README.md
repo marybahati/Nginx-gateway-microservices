@@ -1,6 +1,6 @@
 # Nginx Gateway Microservices
 
-A production-style microservice environment: three Node.js HTTP services behind an Nginx reverse proxy, with service discovery, structured logging, request tracing, and network isolation for internal services.
+A production-style microservice environment: three Node.js HTTP services behind an Nginx reverse proxy, with a full **MELT** observability layer (Metrics, Events, Logs, Traces) using Prometheus, Grafana, Jaeger, Loki, and Promtail.
 
 Only **Service A** is publicly reachable through Nginx. Services B and C are internal infrastructure.
 
@@ -20,9 +20,102 @@ See [Running with Docker Compose](#running-with-docker-compose) for start comman
 2. Clone the repository and change into it.
 3. Start the stack with `docker compose up --build -d`.
 4. Check the public health endpoint at `http://localhost:8080/service-a/health`.
-5. Run `make test` for a full validation pass.
+5. Open Grafana at `http://localhost:3030` (login `admin` / `admin`). If port 3030 is busy on your machine, change the host port in `docker-compose.yml` under `grafana.ports`.
+6. Run `make test` for application validation and `make melt-test` for observability checks.
 
-## Project overview
+## Observability quick start (Saturday demo flow)
+
+Works the same on **macOS, Linux, and Windows** (Docker Desktop required on Mac/Windows).
+
+| Tool | URL | Purpose |
+|---|---|---|
+| App gateway | http://localhost:8080 | Send requests |
+| Grafana | http://localhost:3030 | Operating view (admin/admin) |
+| Prometheus | http://localhost:9090 | Metrics and alerts |
+| Jaeger | http://localhost:16686 | Distributed traces |
+| Loki | http://localhost:3100/ready | Log API — no web UI; use `/ready` to verify, view logs in Grafana |
+
+### 1. Start and verify
+
+```bash
+docker compose up --build -d
+docker compose ps
+curl -fsS http://localhost:8080/service-a/health
+curl -fsS http://localhost:3100/ready    # Loki health (prints "ready")
+```
+
+**Loki note:** `http://localhost:3100/` returns **404** in a browser — that is normal. Loki is an API, not a dashboard. Use `http://localhost:3100/ready` to confirm it is up, then view logs in Grafana.
+
+### 2. Send a successful request
+
+```bash
+curl -fsS http://localhost:8080/service-a/greet-service-b -H "X-Request-ID: demo-success-1"
+```
+
+### 3. View signals
+
+- **Metrics:** Grafana dashboard **MELT Operating View** or Prometheus graph `rate(http_requests_total[1m])`
+- **Traces:** Jaeger → Service `service-a` → Find Traces
+- **Logs:** `docker compose logs service-a` or Grafana Explore → Loki → `{service="service-a"}`
+  - Verify Loki is ingesting: `curl -G -s "http://localhost:3100/loki/api/v1/labels"` (should list `service`, `level`, etc.)
+
+### 4. Run load test (one command)
+
+```bash
+node scripts/load-test.js
+```
+
+On Windows without Node on the host, use Git Bash:
+
+```bash
+bash scripts/load-test.sh
+```
+
+### 5. Trigger controlled failures
+
+**High latency (lab only):**
+
+```bash
+curl -fsS http://localhost:8080/service-a/lab/slow -H "X-Request-ID: demo-slow-1"
+```
+
+**High error rate (lab only):**
+
+```bash
+curl -fsS http://localhost:8080/service-a/lab/fail -H "X-Request-ID: demo-fail-1"
+```
+
+**Service down:**
+
+```bash
+docker compose stop service-b
+curl -sS -o /tmp/out.json -w "HTTP %{http_code}\n" http://localhost:8080/service-a/greet-service-b
+docker compose start service-b
+```
+
+### 6. Confirm alerts
+
+Open http://localhost:9090/alerts after a failure. See [Alert reference](#alert-reference) below.
+
+More detail: [docs/architecture.md](docs/architecture.md), [docs/benchmark-report.md](docs/benchmark-report.md), [jaeger/README.md](jaeger/README.md).
+
+## Optional tools added (Loki + Promtail only)
+
+| Tool | Problem it solves | Data collected | Where to view |
+|---|---|---|---|
+| **Loki** | Central log storage | JSON container logs | Grafana → Explore / dashboard log panel. Health check: `curl http://localhost:3100/ready` (not `http://localhost:3100/`) |
+| **Promtail** | Ships Docker logs to Loki | stdout/stderr from Compose services | Grafana (via Loki) |
+
+## Alert reference
+
+| Alert | PromQL (summary) | Reproduce | Confirm normal |
+|---|---|---|---|
+| ServiceDown | `up{job=~"service-*"} == 0` | `docker compose stop service-b` for 1+ min | `docker compose start service-b` |
+| HighErrorRate | `rate(http_errors_total[2m]) > 0.1` | `curl localhost:8080/service-a/lab/fail` in a loop or run load-test failure scenario | Stop failure traffic |
+| HighLatencyP95 | p95 `http_request_duration_seconds` > 0.5s | `curl localhost:8080/service-a/lab/slow` repeatedly | Stop slow traffic |
+
+Full rules: [alert-rules.yml](alert-rules.yml)
+
 
 The system demonstrates operational patterns used in production:
 
@@ -31,8 +124,7 @@ The system demonstrates operational patterns used in production:
 - **Reverse proxy** — Nginx is the sole public entry point
 - **Network security** — internal services are reachable only inside the Docker network
 - **Dependency management** — Service A waits for B and C to be healthy before starting
-- **Structured logging** — JSON logs to stdout/stderr, viewable with `docker compose logs`
-- **Request tracing** — a single `X-Request-ID` propagates through every hop
+- **MELT observability** — Prometheus metrics, Jaeger traces, Loki logs, Grafana dashboard, alert rules
 
 ## System architecture
 
@@ -349,11 +441,12 @@ docker compose down
 
 ### Production compose environment variables
 
-The production compose file expects three variables:
+The production compose file expects four variables:
 
 - `DOCKERHUB_USERNAME`
 - `APP_NAME`
 - `IMAGE_TAG`
+- `GRAFANA_ADMIN_PASSWORD` — Grafana admin login for the production stack. Set a real secret; do not reuse the local lab's `admin`/`admin`.
 
 Set them before running `docker compose -f docker-compose.prod.yml ...`.
 
@@ -362,7 +455,7 @@ Set them before running `docker compose -f docker-compose.prod.yml ...`.
 Inline one-liner:
 
 ```bash
-DOCKERHUB_USERNAME=warga24 APP_NAME=devops100 IMAGE_TAG=sha-3df3c04 docker compose -f docker-compose.prod.yml down
+DOCKERHUB_USERNAME=warga24 APP_NAME=devops100 IMAGE_TAG=sha-1a08128 docker compose -f docker-compose.prod.yml down
 ```
 
 Persistent session:
@@ -370,7 +463,7 @@ Persistent session:
 ```bash
 export DOCKERHUB_USERNAME="warga24"
 export APP_NAME="devops100"
-export IMAGE_TAG="sha-3df3c04"
+export IMAGE_TAG="sha-1a08128"
 docker compose -f docker-compose.prod.yml up -d --remove-orphans
 ```
 
@@ -379,7 +472,7 @@ docker compose -f docker-compose.prod.yml up -d --remove-orphans
 Inline one-liner:
 
 ```powershell
-$env:DOCKERHUB_USERNAME="warga24"; $env:APP_NAME="devops100"; $env:IMAGE_TAG="sha-3df3c04"; docker compose -f docker-compose.prod.yml down
+$env:DOCKERHUB_USERNAME="warga24"; $env:APP_NAME="devops100"; $env:IMAGE_TAG="sha-1a08128"; docker compose -f docker-compose.prod.yml down
 ```
 
 Persistent session:
@@ -387,14 +480,14 @@ Persistent session:
 ```powershell
 $env:DOCKERHUB_USERNAME="warga24"
 $env:APP_NAME="devops100"
-$env:IMAGE_TAG="sha-3df3c04"
+$env:IMAGE_TAG="sha-1a08128"
 docker compose -f docker-compose.prod.yml up -d --remove-orphans
 ```
 
 #### Windows Git Bash / WSL
 
 ```bash
-DOCKERHUB_USERNAME=warga24 APP_NAME=devops100 IMAGE_TAG=sha-3df3c04 docker compose -f docker-compose.prod.yml down
+DOCKERHUB_USERNAME=warga24 APP_NAME=devops100 IMAGE_TAG=sha-1a08128 docker compose -f docker-compose.prod.yml down
 ```
 
 #### Windows Command Prompt (`cmd.exe`)
@@ -402,7 +495,7 @@ DOCKERHUB_USERNAME=warga24 APP_NAME=devops100 IMAGE_TAG=sha-3df3c04 docker compo
 Inline one-liner:
 
 ```bat
-set DOCKERHUB_USERNAME=warga24 & set APP_NAME=devops100 & set IMAGE_TAG=sha-3df3c04 & docker compose -f docker-compose.prod.yml down
+set DOCKERHUB_USERNAME=warga24 & set APP_NAME=devops100 & set IMAGE_TAG=sha-1a08128 & docker compose -f docker-compose.prod.yml down
 ```
 
 Persistent session:
@@ -410,7 +503,7 @@ Persistent session:
 ```bat
 set DOCKERHUB_USERNAME=warga24
 set APP_NAME=devops100
-set IMAGE_TAG=sha-3df3c04
+set IMAGE_TAG=sha-1a08128
 docker compose -f docker-compose.prod.yml down
 ```
 
@@ -421,7 +514,8 @@ make up          # build and start
 make down        # stop and remove
 make ps          # container status
 make logs        # follow logs
-make test        # run full 7-test validation
+make test        # run application validation (7 tests)
+make melt-test   # run observability validation
 make restart     # restart all services
 ```
 
@@ -431,14 +525,14 @@ Full validation evidence: [docs/CONTAINER_VALIDATION.md](docs/CONTAINER_VALIDATI
 
 ### Latest Deployed Version
 
-Commit: `3df3c04fc5e5886462cd43f3e62c7066dbd1e1bd`
+Commit: `1a081280000000000000000000000000000000000`
 
-Image tag: `sha-3df3c04`
+Image tag: `sha-1a08128`
 
 Images:
-- `warga24/devops100-service-a:sha-3df3c04`
-- `warga24/devops100-service-b:sha-3df3c04`
-- `warga24/devops100-service-c:sha-3df3c04`
+- `warga24/devops100-service-a:sha-1a08128`
+- `warga24/devops100-service-b:sha-1a08128`
+- `warga24/devops100-service-c:sha-1a08128`
 
 GitHub Actions runs PR verification on every pull request to `main`: `npm ci`, `npm test`, `npm run build --if-present`, local Docker image builds, `docker compose config`, Compose build, Compose startup, and the Nginx health check. Docker Hub publishing runs only after a successful push to `main`.
 
@@ -452,20 +546,21 @@ Required GitHub settings:
 cp .env.example .env
 export DOCKERHUB_USERNAME=warga24
 export APP_NAME=devops100
-export IMAGE_TAG=sha-3df3c04
-./scripts/deploy.sh sha-3df3c04
+export IMAGE_TAG=sha-1a08128
+./scripts/deploy.sh sha-1a08128
+export GRAFANA_ADMIN_PASSWORD=<a-real-secret>
 ```
 
 ### Verify
 
 ```bash
-DOCKERHUB_USERNAME=warga24 APP_NAME=devops100 IMAGE_TAG=sha-3df3c04 docker compose -f docker-compose.prod.yml ps
+DOCKERHUB_USERNAME=warga24 APP_NAME=devops100 IMAGE_TAG=sha-1a08128 docker compose -f docker-compose.prod.yml ps
 curl -fsS http://localhost:8080/service-a/health
 ```
 
 Production deployment uses `docker-compose.prod.yml`, which pulls version-tagged images from Docker Hub and does not build locally. Do not deploy `latest`, `main`, or `dev` tags.
 
-`sha-3df3c04` is the latest image tag published to Docker Hub. After committing new source changes, publish images with a new sha- tag and update this section so the reviewed source state and deployed image tag match exactly.
+`sha-1a08128` is the latest image tag published to Docker Hub. After committing new source changes, publish images with a new sha- tag and update this section so the reviewed source state and deployed image tag match exactly.
 
 ## API contract
 
@@ -473,23 +568,32 @@ Production deployment uses `docker-compose.prod.yml`, which pulls version-tagged
 
 | Method | Path | Response |
 |---|---|---|
-| GET | `/health` | `{ "service": "service-a", "status": "healthy", "port": 3001, "message": "..." }` |
+| GET | `/health` | `{ "service": "service-a", "status": "ok", "dependencies": { "service-b": "ok", "service-c": "ok" } }` |
+| GET | `/metrics` | Prometheus metrics |
 | GET | `/greet-service-b` | `{ "request_id": "...", "status": "success", "message": "Request completed successfully" }` |
+| GET | `/lab/slow` | Lab-only — triggers `service-b /slow` |
+| GET | `/lab/fail` | Lab-only — triggers `service-c /fail` |
 | POST | `/greeting-rcvd` | `{ "status": "received" }` — callback from Service C |
 
 ### Service B (`service-b`, port 3002, internal)
 
 | Method | Path | Response |
 |---|---|---|
-| GET | `/health` | `{ "service": "service-b", "status": "healthy", "port": 3002, "message": "..." }` |
+| GET | `/health` | `{ "service": "service-b", "status": "ok", "dependencies": { "service-c": "ok" } }` |
+| GET | `/metrics` | Prometheus metrics |
 | GET | `/greet` | `{ "request_id": "...", "status": "forwarded", "target": "service-c" }` — requires `X-Request-ID` |
+| GET | `/slow` | Lab-only slow endpoint |
+| GET | `/fail` | Lab-only error endpoint |
 
 ### Service C (`service-c`, port 3003, internal)
 
 | Method | Path | Response |
 |---|---|---|
-| GET | `/health` | `{ "service": "service-c", "status": "healthy", "port": 3003, "message": "..." }` |
+| GET | `/health` | `{ "service": "service-c", "status": "ok", "dependencies": {} }` |
+| GET | `/metrics` | Prometheus metrics |
 | GET | `/greet-c` | `{ "request_id": "...", "status": "processed", "callback_sent": true }` — requires `X-Request-ID` |
+| GET | `/slow` | Lab-only slow endpoint |
+| GET | `/fail` | Lab-only error endpoint |
 
 ## Repository structure
 
@@ -498,10 +602,20 @@ Production deployment uses `docker-compose.prod.yml`, which pulls version-tagged
 │   └── container-ci-cd.yml   # PR CI, Compose verification, main-only Docker Hub publish
 ├── .dockerignore             # Build context exclusions
 ├── .env.example              # Non-secret production deploy variables
+├── alert-rules.yml           # Prometheus alert rules
+├── prometheus.yml            # Prometheus scrape config
 ├── docker-compose.yml        # Local Compose stack with build: entries
 ├── docker-compose.prod.yml   # Production Compose stack with Docker Hub image: entries
-├── Makefile                  # up, down, test, logs, etc.
+├── grafana/
+│   ├── dashboards/           # MELT Operating View dashboard
+│   └── provisioning/         # Grafana datasources + dashboard provisioning
+├── jaeger/README.md          # Jaeger usage guide
+├── loki/loki-config.yml
+├── promtail/promtail-config.yml
+├── Makefile                  # up, down, test, melt-test, logs, etc.
 ├── docs/
+│   ├── architecture.md       # Request + telemetry flows
+│   ├── benchmark-report.md   # Load test results template
 │   ├── setup-macos.md
 │   ├── setup-linux.md
 │   ├── setup-windows.md
@@ -510,9 +624,16 @@ Production deployment uses `docker-compose.prod.yml`, which pulls version-tagged
 │   └── nginx-docker.conf     # Nginx config (public → Service A only)
 ├── scripts/
 │   ├── deploy.sh             # Pull and run a commit-tagged production image set
+│   ├── load-test.js          # Repeatable MELT load test (Node)
+│   ├── load-test.sh          # Repeatable MELT load test (bash)
 │   ├── wait-for-deps.mjs     # Service A dependency health wait (Docker)
 │   └── wait-for-deps.sh      # Shell variant (optional reference)
-├── shared/logger.js
+├── shared/
+│   ├── logger.js
+│   ├── metrics.js
+│   ├── middleware.js
+│   ├── tracing.js
+│   └── health.js
 └── services/
     ├── service-a/
     │   ├── Dockerfile

@@ -9,6 +9,7 @@ const SERVICE_NAME = "service-a";
 const PORT = 3101;
 const STUB_B_PORT = 3102;
 const STUB_C_PORT = 3103;
+const PORT2 = 3111;
 
 function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -83,7 +84,7 @@ function spawnService(env = {}) {
   const serviceDir = path.resolve(__dirname, "..");
   return spawnProc(process.execPath, ["index.js"], {
     cwd: serviceDir,
-    env: { ...process.env, BIND_HOST: "127.0.0.1", PORT: String(PORT), ...env },
+    env: { ...process.env, BIND_HOST: "127.0.0.1", PORT: String(PORT), OTEL_SDK_DISABLED: "true", NODE_PATH: path.join(serviceDir, "node_modules"), ...env },
     stdio: ["ignore", "pipe", "pipe"],
   });
 }
@@ -94,12 +95,12 @@ test("health endpoint returns clean service JSON", async (t) => {
   });
   t.after(() => child.kill("SIGTERM"));
 
-  const response = await waitForHealth(`http://127.0.0.1:${PORT}/health`);
+  const response = await waitForHealth(`http://127.0.0.1:${PORT}/health?shallow=1`);
   assert.match(response.headers.get("content-type"), /application\/json/);
   const body = await response.json();
   assert.equal(body.service, SERVICE_NAME);
-  assert.equal(body.status, "healthy");
-  assert.equal(body.port, PORT);
+  assert.equal(body.status, "ok");
+  assert.ok(body.dependencies);
 });
 
 test("greet-service-b completes the A→B→C chain", async (t) => {
@@ -125,14 +126,14 @@ test("greet-service-b completes the A→B→C chain", async (t) => {
 });
 
 test("greet-service-b returns 500 when service-b is unreachable", async (t) => {
-  // No stub B started — port 3199 nothing listening
   const child = spawnService({
+    PORT: String(PORT2),
     SERVICE_B_URL: "http://127.0.0.1:3199",
   });
   t.after(() => child.kill("SIGTERM"));
 
-  await waitForHealth(`http://127.0.0.1:${PORT}/health`);
-  const response = await fetch(`http://127.0.0.1:${PORT}/greet-service-b`, {
+  await waitForHealth(`http://127.0.0.1:${PORT2}/health`);
+  const response = await fetch(`http://127.0.0.1:${PORT2}/greet-service-b`, {
     headers: { "X-Request-ID": "test-fail-001" },
   });
   assert.equal(response.status, 500);
