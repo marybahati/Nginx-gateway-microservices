@@ -454,7 +454,7 @@ Set them before running `docker compose -f docker-compose.prod.yml ...`.
 Inline one-liner:
 
 ```bash
-DOCKERHUB_USERNAME=warga24 APP_NAME=devops100 IMAGE_TAG=v1 docker compose -f docker-compose.prod.yml down
+DOCKERHUB_USERNAME=warga24 APP_NAME=devops100 IMAGE_TAG=sha-3df3c04 docker compose -f docker-compose.prod.yml down
 ```
 
 Persistent session:
@@ -462,7 +462,7 @@ Persistent session:
 ```bash
 export DOCKERHUB_USERNAME="warga24"
 export APP_NAME="devops100"
-export IMAGE_TAG="v1"
+export IMAGE_TAG="sha-3df3c04"
 docker compose -f docker-compose.prod.yml up -d --remove-orphans
 ```
 
@@ -471,7 +471,7 @@ docker compose -f docker-compose.prod.yml up -d --remove-orphans
 Inline one-liner:
 
 ```powershell
-$env:DOCKERHUB_USERNAME="warga24"; $env:APP_NAME="devops100"; $env:IMAGE_TAG="v1"; docker compose -f docker-compose.prod.yml down
+$env:DOCKERHUB_USERNAME="warga24"; $env:APP_NAME="devops100"; $env:IMAGE_TAG="sha-3df3c04"; docker compose -f docker-compose.prod.yml down
 ```
 
 Persistent session:
@@ -479,14 +479,14 @@ Persistent session:
 ```powershell
 $env:DOCKERHUB_USERNAME="warga24"
 $env:APP_NAME="devops100"
-$env:IMAGE_TAG="v1"
+$env:IMAGE_TAG="sha-3df3c04"
 docker compose -f docker-compose.prod.yml up -d --remove-orphans
 ```
 
 #### Windows Git Bash / WSL
 
 ```bash
-DOCKERHUB_USERNAME=warga24 APP_NAME=devops100 IMAGE_TAG=v1 docker compose -f docker-compose.prod.yml down
+DOCKERHUB_USERNAME=warga24 APP_NAME=devops100 IMAGE_TAG=sha-3df3c04 docker compose -f docker-compose.prod.yml down
 ```
 
 #### Windows Command Prompt (`cmd.exe`)
@@ -494,7 +494,7 @@ DOCKERHUB_USERNAME=warga24 APP_NAME=devops100 IMAGE_TAG=v1 docker compose -f doc
 Inline one-liner:
 
 ```bat
-set DOCKERHUB_USERNAME=warga24 & set APP_NAME=devops100 & set IMAGE_TAG=v1 & docker compose -f docker-compose.prod.yml down
+set DOCKERHUB_USERNAME=warga24 & set APP_NAME=devops100 & set IMAGE_TAG=sha-3df3c04 & docker compose -f docker-compose.prod.yml down
 ```
 
 Persistent session:
@@ -502,7 +502,7 @@ Persistent session:
 ```bat
 set DOCKERHUB_USERNAME=warga24
 set APP_NAME=devops100
-set IMAGE_TAG=v1
+set IMAGE_TAG=sha-3df3c04
 docker compose -f docker-compose.prod.yml down
 ```
 
@@ -526,12 +526,12 @@ Full validation evidence: [docs/CONTAINER_VALIDATION.md](docs/CONTAINER_VALIDATI
 
 Commit: `3df3c04fc5e5886462cd43f3e62c7066dbd1e1bd`
 
-Image tag: `v1`
+Image tag: `sha-3df3c04`
 
 Images:
-- `warga24/devops100-service-a:v1`
-- `warga24/devops100-service-b:v1`
-- `warga24/devops100-service-c:v1`
+- `warga24/devops100-service-a:sha-3df3c04`
+- `warga24/devops100-service-b:sha-3df3c04`
+- `warga24/devops100-service-c:sha-3df3c04`
 
 GitHub Actions runs PR verification on every pull request to `main`: `npm ci`, `npm test`, `npm run build --if-present`, local Docker image builds, `docker compose config`, Compose build, Compose startup, and the Nginx health check. Docker Hub publishing runs only after a successful push to `main`.
 
@@ -545,20 +545,20 @@ Required GitHub settings:
 cp .env.example .env
 export DOCKERHUB_USERNAME=warga24
 export APP_NAME=devops100
-export IMAGE_TAG=v1
-./scripts/deploy.sh v1
+export IMAGE_TAG=sha-3df3c04
+./scripts/deploy.sh sha-3df3c04
 ```
 
 ### Verify
 
 ```bash
-DOCKERHUB_USERNAME=warga24 APP_NAME=devops100 IMAGE_TAG=v1 docker compose -f docker-compose.prod.yml ps
+DOCKERHUB_USERNAME=warga24 APP_NAME=devops100 IMAGE_TAG=sha-3df3c04 docker compose -f docker-compose.prod.yml ps
 curl -fsS http://localhost:8080/service-a/health
 ```
 
 Production deployment uses `docker-compose.prod.yml`, which pulls version-tagged images from Docker Hub and does not build locally. Do not deploy `latest`, `main`, or `dev` tags.
 
-`v1` is the latest image tag published to Docker Hub. After committing new source changes, publish images with a new version tag and update this section so the reviewed source state and deployed image tag match exactly.
+`sha-3df3c04` is the latest image tag published to Docker Hub. After committing new source changes, publish images with a new sha- tag and update this section so the reviewed source state and deployed image tag match exactly.
 
 ## API contract
 
