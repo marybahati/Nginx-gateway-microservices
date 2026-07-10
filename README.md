@@ -14,6 +14,59 @@ Only **Service A** is publicly reachable through Nginx. Services B and C are int
 
 See [Running with Docker Compose](#running-with-docker-compose) for start commands.
 
+## Table of Contents
+
+- [Quick start](#quick-start)
+- [Observability quick start (Saturday demo flow)](#observability-quick-start-saturday-demo-flow)
+  - [1. Start and verify](#1-start-and-verify)
+  - [2. Send a successful request](#2-send-a-successful-request)
+  - [3. View signals](#3-view-signals)
+  - [4. Run load test (one command)](#4-run-load-test-one-command)
+  - [5. Trigger controlled failures](#5-trigger-controlled-failures)
+  - [6. Confirm alerts](#6-confirm-alerts)
+- [Optional tools added (Loki + Promtail only)](#optional-tools-added-loki--promtail-only)
+- [Alert reference](#alert-reference)
+  - [ServiceDown](#servicedown)
+  - [HighErrorRate](#higherrorrate)
+  - [HighLatencyP95](#highlatencyp95)
+- [System architecture](#system-architecture)
+  - [High-level view](#high-level-view)
+  - [Container startup order](#container-startup-order)
+  - [End-to-end request flow](#end-to-end-request-flow)
+  - [Inner workings by component](#inner-workings-by-component)
+    - [Nginx (gateway)](#nginx-gateway)
+    - [Service A (orchestrator)](#service-a-orchestrator)
+    - [Service B (relay)](#service-b-relay)
+    - [Service C (processor + callback)](#service-c-processor--callback)
+    - [Service discovery](#service-discovery)
+    - [Request tracing](#request-tracing)
+    - [Logging](#logging)
+  - [Network isolation](#network-isolation)
+  - [Failure and recovery](#failure-and-recovery)
+- [Running with Docker Compose](#running-with-docker-compose)
+  - [Prerequisites](#prerequisites)
+  - [Start the system](#start-the-system)
+  - [Test the public route](#test-the-public-route)
+  - [Prove B and C are internal](#prove-b-and-c-are-internal)
+  - [View logs](#view-logs)
+  - [Stop and restart a service](#stop-and-restart-a-service)
+  - [Shut everything down](#shut-everything-down)
+  - [Production compose environment variables](#production-compose-environment-variables)
+    - [macOS & Linux (Bash / Zsh)](#macos--linux-bash--zsh)
+    - [Windows PowerShell](#windows-powershell)
+    - [Windows Git Bash / WSL](#windows-git-bash--wsl)
+    - [Windows Command Prompt (`cmd.exe`)](#windows-command-prompt-cmdexe)
+  - [Makefile shortcuts](#makefile-shortcuts)
+- [Container CI/CD Deployment](#container-cicd-deployment)
+  - [Latest Deployed Version](#latest-deployed-version)
+  - [Deploy](#deploy)
+  - [Verify](#verify)
+- [API contract](#api-contract)
+  - [Service A (`service-a`, port 3001)](#service-a-service-a-port-3001)
+  - [Service B (`service-b`, port 3002, internal)](#service-b-service-b-port-3002-internal)
+  - [Service C (`service-c`, port 3003, internal)](#service-c-service-c-port-3003-internal)
+- [Repository structure](#repository-structure)
+
 ## Quick start
 
 1. Install Docker and ensure the daemon is running.
@@ -57,7 +110,7 @@ curl -fsS http://localhost:8080/service-a/greet-service-b -H "X-Request-ID: demo
 - **Metrics:** Grafana dashboard **MELT Operating View** or Prometheus graph `rate(http_requests_total[1m])`
 - **Traces:** Jaeger → Service `service-a` → Find Traces
 - **Logs:** `docker compose logs service-a` or Grafana Explore → Loki → `{service="service-a"}`
-  - Verify Loki is ingesting: `curl -G -s "http://localhost:3100/loki/api/v1/labels"` (should list `service`, `level`, etc.)
+- Verify Loki is ingesting: `curl -G -s "http://localhost:3100/loki/api/v1/labels"` (should list `service`, `level`, etc.)
 
 ### 4. Run load test (one command)
 
@@ -108,13 +161,42 @@ More detail: [docs/architecture.md](docs/architecture.md), [docs/benchmark-repor
 
 ## Alert reference
 
-| Alert | PromQL (summary) | Reproduce | Confirm normal |
-|---|---|---|---|
-| ServiceDown | `up{job=~"service-*"} == 0` | `docker compose stop service-b` for 1+ min | `docker compose start service-b` |
-| HighErrorRate | `rate(http_errors_total[2m]) > 0.1` | `curl localhost:8080/service-a/lab/fail` in a loop or run load-test failure scenario | Stop failure traffic |
-| HighLatencyP95 | p95 `http_request_duration_seconds` > 0.5s | `curl localhost:8080/service-a/lab/slow` repeatedly | Stop slow traffic |
+Full rules: [alert-rules.yml](alert-rules.yml). Each alert is documented below with its condition, meaning, causes specific to this stack, reproduction steps, first checks, and how to confirm recovery.
 
-Full rules: [alert-rules.yml](alert-rules.yml)
+### ServiceDown
+
+- **PromQL:** `up{job=~"service-a|service-b|service-c"} == 0` for `1m`
+- **What it means:** Prometheus could not scrape that service's `/metrics` endpoint for a full minute.
+- **Possible causes:** the container was stopped (`docker compose stop <service>` / `make stop-service`); the Node process crashed (e.g. an unhandled promise rejection — see the `downstream_timeout` crash bug fixed in `service-a`); or the container is still blocked inside `wait-for-deps.mjs`, waiting on a dependency's `/health` that isn't responding yet.
+- **How to reproduce:** `docker compose stop service-b` and wait 1+ minute.
+- **First checks:**
+  1. `docker compose ps` — check status and uptime. A container with very low uptime, while nothing else was manually stopped, points to a crash-restart, not a deliberate stop.
+  2. `docker compose logs <service> --tail 50` — a stack trace, or repeating `Waiting for http://...` lines, confirms a crash-restart loop.
+  3. `curl http://localhost:9090/api/v1/targets` — confirms which job shows `"health":"down"`.
+- **Confirm normal:** `docker compose start service-b`; `up{job="service-b"}` returns to `1` and the alert returns to `inactive` within one scrape + evaluation cycle (~15–30s after the process is actually listening).
+
+### HighErrorRate
+
+- **PromQL:** `sum by (service) (rate(http_errors_total[2m])) > 0.1` for `2m`
+- **What it means:** a service's 5xx rate has averaged above 0.1 req/s for 2 minutes.
+- **Possible causes:** the lab-only `/fail` endpoint being hit directly on service-b or service-c, or `/lab/fail` on service-a (which calls service-c's `/fail`); or a genuine downstream failure — e.g. service-b's `/greet` failing because service-c is unreachable, logged with `event: "request_failed"`.
+- **How to reproduce:** loop `curl http://localhost:8080/service-a/lab/fail`, or run the failure scenario in `node scripts/load-test.js`.
+- **First checks:**
+  1. Grafana "Error Rate" panel — identifies which service.
+  2. `docker compose logs <service> | grep '"level":"error"'` — the logged `error` field and `request_id`.
+  3. Jaeger — find the trace for that `request_id` and inspect the failed span.
+- **Confirm normal:** stop the failure traffic; `rate(http_errors_total[2m])` falls back under `0.1` within ~2 minutes (the rate window).
+
+### HighLatencyP95
+
+- **PromQL:** `histogram_quantile(0.95, sum by (service, le) (rate(http_request_duration_seconds_bucket[5m]))) > 0.5` for `2m`
+- **What it means:** p95 request duration for a service has stayed above 500ms for 2 minutes.
+- **Possible causes:** the lab-only `/slow` endpoint (service-b's `SLOW_DELAY_MS`, default 2000ms) being hit directly or via `/lab/slow`; or `/health` blocking on a downstream dependency check — `shared/health.js` waits up to 2000ms (`AbortSignal.timeout(2000)`) per dependency when that dependency is unreachable, which we've confirmed inflates `/health` latency to ~2s during an outage.
+- **How to reproduce:** loop `curl http://localhost:8080/service-a/lab/slow`, or run the stress scenario in `node scripts/load-test.js`.
+- **First checks:**
+  1. Grafana "p95 Latency" panel — identifies which service.
+  2. Jaeger — find the slow trace and see which span/hop accounts for most of the duration.
+- **Confirm normal:** stop the slow traffic; p95 drops back under 500ms within ~5 minutes (the rate window length).
 
 
 The system demonstrates operational patterns used in production:
