@@ -441,11 +441,12 @@ docker compose down
 
 ### Production compose environment variables
 
-The production compose file expects three variables:
+The production compose file expects four variables:
 
 - `DOCKERHUB_USERNAME`
 - `APP_NAME`
 - `IMAGE_TAG`
+- `GRAFANA_ADMIN_PASSWORD` — Grafana admin login for the production stack. Set a real secret; do not reuse the local lab's `admin`/`admin`.
 
 Set them before running `docker compose -f docker-compose.prod.yml ...`.
 
@@ -546,6 +547,7 @@ cp .env.example .env
 export DOCKERHUB_USERNAME=warga24
 export APP_NAME=devops100
 export IMAGE_TAG=sha-3df3c04
+export GRAFANA_ADMIN_PASSWORD=<a-real-secret>
 ./scripts/deploy.sh sha-3df3c04
 ```
 

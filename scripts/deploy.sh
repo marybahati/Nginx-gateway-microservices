@@ -31,6 +31,12 @@ if [ -z "${DOCKERHUB_USERNAME:-}" ]; then
   exit 1
 fi
 
+if [ -z "${GRAFANA_ADMIN_PASSWORD:-}" ]; then
+  echo "Missing GRAFANA_ADMIN_PASSWORD"
+  echo "Set it with: export GRAFANA_ADMIN_PASSWORD=<a-real-secret>"
+  exit 1
+fi
+
 echo "Deploying ${APP_NAME} using image tag: ${IMAGE_TAG}"
 docker compose -f docker-compose.prod.yml pull
 docker compose -f docker-compose.prod.yml up -d --wait --remove-orphans
