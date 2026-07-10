@@ -1,0 +1,11 @@
+apiVersion: 1
+
+providers:
+  - name: MELT
+    orgId: 1
+    folder: MELT
+    type: file
+    disableDeletion: false
+    editable: true
+    options:
+      path: /var/lib/grafana/dashboards

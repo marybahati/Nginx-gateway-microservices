@@ -5,6 +5,8 @@ services:
     environment:
       BIND_HOST: 0.0.0.0
       SERVICE_C_URL: http://service-c:3003
+      SERVICE_C_HEALTH_URL: http://service-c:3003/health
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
     init: true
     cap_drop:
       - ALL
@@ -32,6 +34,8 @@ services:
     environment:
       BIND_HOST: 0.0.0.0
       SERVICE_A_CALLBACK_URL: http://service-a:3001
+      SERVICE_A_HEALTH_URL: http://service-a:3001/health
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
     init: true
     cap_drop:
       - ALL
@@ -59,8 +63,10 @@ services:
     environment:
       BIND_HOST: 0.0.0.0
       SERVICE_B_URL: http://service-b:3002
+      SERVICE_C_URL: http://service-c:3003
       SERVICE_B_HEALTH_URL: http://service-b:3002/health
       SERVICE_C_HEALTH_URL: http://service-c:3003/health
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
     depends_on:
       service-b:
         condition: service_healthy
@@ -116,9 +122,90 @@ services:
       - public
       - private
 
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    user: "nobody"
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.enable-lifecycle
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./alert-rules.yml:/etc/prometheus/alert-rules.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    restart: unless-stopped
+    networks:
+      - public
+      - private
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    user: "472"
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD}
+      GF_USERS_DEFAULT_THEME: dark
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "3030:3000"
+    depends_on:
+      - prometheus
+      - loki
+    restart: unless-stopped
+    networks:
+      - public
+      - private
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.57
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686"
+      - "4318:4318"
+    restart: unless-stopped
+    networks:
+      - public
+      - private
+
+  loki:
+    image: grafana/loki:3.0.0
+    user: "10001"
+    command: -config.file=/etc/loki/loki-config.yml
+    volumes:
+      - ./loki/loki-config.yml:/etc/loki/loki-config.yml:ro
+      - loki-data:/loki
+    ports:
+      - "3100:3100"
+    restart: unless-stopped
+    networks:
+      - public
+      - private
+
+  promtail:
+    image: grafana/promtail:3.0.0
+    user: root
+    command: -config.file=/etc/promtail/promtail-config.yml
+    volumes:
+      - ./promtail/promtail-config.yml:/etc/promtail/promtail-config.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      - loki
+    restart: unless-stopped
+    networks:
+      - private
+
 networks:
   public:
     driver: bridge
   private:
     driver: bridge
     internal: true
+
+volumes:
+  prometheus-data:
+  loki-data:

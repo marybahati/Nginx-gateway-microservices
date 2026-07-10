@@ -15,6 +15,7 @@ RUN npm config set fetch-retries 5 \
 COPY --chown=node:node services/service-b/index.js /app/services/service-b/
 
 ENV BIND_HOST=0.0.0.0
+ENV NODE_PATH=/app/services/service-b/node_modules
 
 EXPOSE 3002
 
