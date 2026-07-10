@@ -30,7 +30,7 @@ function spawnService(env = {}) {
   const serviceDir = path.resolve(__dirname, "..");
   return spawn(process.execPath, ["index.js"], {
     cwd: serviceDir,
-    env: { ...process.env, BIND_HOST: "127.0.0.1", PORT: String(PORT), OTEL_SDK_DISABLED: "true", ...env },
+    env: { ...process.env, BIND_HOST: "127.0.0.1", PORT: String(PORT), OTEL_SDK_DISABLED: "true", NODE_PATH: path.join(serviceDir, "node_modules"), ...env },
     stdio: ["ignore", "pipe", "pipe"],
   });
 }
