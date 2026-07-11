@@ -94,6 +94,18 @@
       "targets": [{ "expr": "{service=~\"service-a|service-b|service-c\"}", "refId": "A" }],
       "title": "Service Logs (Loki)",
       "type": "logs"
+    },
+    {
+      "datasource": { "type": "jaeger", "uid": "jaeger" },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 24 },
+      "id": 7,
+      "targets": [{
+        "queryType": "search",
+        "refId": "A",
+        "service": "service-a"
+      }],
+      "title": "Traces (Jaeger — service-a)",
+      "type": "traces"
     }
   ],
   "refresh": "10s",
