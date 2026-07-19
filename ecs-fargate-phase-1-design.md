@@ -46,6 +46,28 @@ Before we enforce service-a → service-c denial in Amazon Web Services, we will
 
 ---
 
+## 0. Pre-Gate-2 action items
+
+These are required code and image changes, not AWS configuration. They must land before the resources that depend on them are created, or Gate 2 enforcement will break the running application.
+
+### 0.1 Application code changes
+
+| Change | File | Owner | Must land before |
+|---|---|---|---|
+| Add `?shallow=1` support to `/health` — skip the service-c dependency check when present | `services/service-a/index.js` (or `shared/health.js`) | Service A owner | ALB target group creation |
+| Confirm `/lab/fail` doesn't call service-c directly from A (route through B if it does) | `services/service-a/index.js` | Service A owner | Sabotage round (Phase 4.2) |
+| Decide whether `wait-for-deps.mjs` still polls service-c from A, and whether that's acceptable pre-steady-state or needs removing | `scripts/wait-for-deps.mjs` | Service A owner | Before first ECS deploy |
+
+Without this, the network-level "service-a → service-c: denied" rule will break the application at the health-check layer, since `/health` currently reports `service-c` status directly.
+
+### 0.2 Image changes
+
+| Change | Owner | Notes |
+|---|---|---|
+| Add `curl` (or use Node's built-in `http` module for the container health check command) to each service's Dockerfile | Each service owner | Base image `node:20.19.5-alpine3.22` currently has no extra OS packages. Assignment requires a shell-based health check and requires `curl`/`wget` for ECS Exec connectivity tests, and explicitly says not to install diagnostic tools manually inside a running task — they must be baked into the image. |
+
+---
+
 ## 1. Dependency graph
 
 ### 1.1 Create-order graph
@@ -196,17 +218,33 @@ These cover host (image pull), forward wiring (service-a → service-b), and the
 
 A public Internet Protocol address on Fargate tasks does not mean public access. Security groups enforce the contract.
 
+Security group egress: all four custom security groups use the default "allow all outbound" rule created automatically with new security groups. This is sufficient for this lab (Elastic Container Registry pulls, Service Connect calls, and the service-c → service-a callback all require outbound reach), and egress is not being restricted at this stage.
+
 ### 3.2 Pair agreements
 
 | Pair | Protocol | Port | Service Connect name | Security group reference | Endpoint | Timeout |
 |---|---|---|---|---|---|---|
 | Client → Application Load Balancer | Hypertext Transfer Protocol | 80 | Application Load Balancer domain name | Internet → alb-sg | Application Load Balancer listener | about 5 seconds client curl |
-| Application Load Balancer → service-a | Hypertext Transfer Protocol | 3001 | — (target group Internet Protocol type) | alb-sg → service-a-sg | `GET /health?shallow=1` | Application Load Balancer health interval (about 30 seconds) |
+| Application Load Balancer → service-a | Hypertext Transfer Protocol | 3001 | — (target group Internet Protocol type) | alb-sg → service-a-sg | `GET /health?shallow=1` | Application Load Balancer health interval (30 seconds, see 3.3) |
 | service-a → service-b | Hypertext Transfer Protocol | 3002 | `service-b` in `group5.internal` | service-a-sg → service-b-sg | `GET /health` | 5 second probe; application uses its own timeout |
 | service-b → service-c | Hypertext Transfer Protocol | 3003 | `service-c` in `group5.internal` | service-b-sg → service-c-sg | `GET /health` | 5 second probe |
 | service-c → service-a | Hypertext Transfer Protocol | 3001 | `service-a` in `group5.internal` | service-c-sg → service-a-sg | `POST /greeting-rcvd` | less than or equal to `CALLBACK_TIMEOUT_MS` (default 30 seconds) |
 
-### 3.3 Runtime verification plan
+**Timeout interaction check:** the ALB's default idle timeout is 60 seconds, comfortably above the application's `CALLBACK_TIMEOUT_MS` default of 30 seconds. A client waiting on `/greet-service-b` will receive the application's own 504 `downstream_timeout` before the ALB would ever cut the connection — confirmed so the two timeouts don't interact unexpectedly.
+
+### 3.3 Application Load Balancer health check settings
+
+| Setting | Value |
+|---|---|
+| Path | `/health?shallow=1` |
+| Interval | 30 seconds |
+| Timeout | 5 seconds |
+| Healthy threshold | 2 consecutive successes |
+| Unhealthy threshold | 3 consecutive failures |
+
+These numbers directly determine observed recovery time in Phase 4.3 (kill a task) — worst case, an unhealthy target is pulled from rotation within roughly 2–3 health-check cycles (60–90 seconds) of the underlying task actually failing, though ECS typically deregisters a stopped task's target faster via the stopping lifecycle hook.
+
+### 3.4 Runtime verification plan
 
 | Test | Where | Expected |
 |---|---|---|
@@ -222,7 +260,7 @@ A public Internet Protocol address on Fargate tasks does not mean public access.
 
 ## 4. Resource ownership
 
-Owners may advise each other; they do not operate another owner’s console.
+Owners may advise each other; they do not operate another owner's console.
 
 ### 4.1 Ownership map
 
@@ -254,11 +292,15 @@ Owners may advise each other; they do not operate another owner’s console.
 
 ### 4.3 Elastic Container Service plan
 
-| Service | Desired count | Application Load Balancer | Public Internet Protocol address | Circuit breaker + rollback | Elastic Container Service Exec |
-|---|---|---|---|---|---|
-| service-a | **2** | Yes (after Application Load Balancer is wired) | Enabled | Enabled | Enabled |
-| service-b | **1** | No | Enabled | Enabled | Enabled |
-| service-c | **1** | No | Enabled | Enabled | Enabled |
+| Service | Desired count | CPU | Memory | Application Load Balancer | Public Internet Protocol address | Circuit breaker + rollback | Elastic Container Service Exec |
+|---|---|---|---|---|---|---|---|
+| service-a | **2** | 256 (.25 vCPU) | 512 MB | Yes (after Application Load Balancer is wired) | Enabled | Enabled | Enabled |
+| service-b | **1** | 256 (.25 vCPU) | 512 MB | No | Enabled | Enabled | Enabled |
+| service-c | **1** | 256 (.25 vCPU) | 512 MB | No | Enabled | Enabled | Enabled |
+
+**CPU/memory justification:** all three services are thin Node.js HTTP relays/orchestrators with no heavy compute or in-memory data processing. service-a holds request state slightly longer (up to 30 seconds while awaiting the service-c callback), so it gets the same headroom as B and C rather than less, to avoid memory pressure under concurrent in-flight requests during load testing (Phase 4.3).
+
+**Fargate platform version:** `LATEST` (currently maps to 1.4.0 or newer) for all task definitions — required for Service Connect and ECS Exec support.
 
 ---
 
@@ -280,6 +322,7 @@ All Amazon Web Services resource names use prefix `devops-g5-`. The Service Conn
 | CloudWatch log group service-a | `/ecs/devops-g5-service-a` |
 | CloudWatch log group service-b | `/ecs/devops-g5-service-b` |
 | CloudWatch log group service-c | `/ecs/devops-g5-service-c` |
+| Fargate platform version | `LATEST` (1.4.0+) |
 
 ### 5.2 Per-service hosting
 
@@ -292,6 +335,7 @@ All Amazon Web Services resource names use prefix `devops-g5-`. The Service Conn
 | Elastic Container Service service | `devops-g5-svc-service-a` | `devops-g5-svc-service-b` | `devops-g5-svc-service-c` |
 | Security group | `devops-g5-service-a-sg` | `devops-g5-service-b-sg` | `devops-g5-service-c-sg` |
 | Service Connect name | `service-a` | `service-b` | `service-c` |
+| CPU / Memory | 256 / 512 MB | 256 / 512 MB | 256 / 512 MB |
 
 ### 5.3 Delivery names (reserved)
 
@@ -301,6 +345,8 @@ All Amazon Web Services resource names use prefix `devops-g5-`. The Service Conn
 | CodePipeline | `devops-g5-pipeline-service-a` | `devops-g5-pipeline-service-b` | `devops-g5-pipeline-service-c` |
 | Build specification | `buildspecs/service-a.yml` | `buildspecs/service-b.yml` | `buildspecs/service-c.yml` |
 | CodeConnections | `devops-g5-codeconnections-github` (shared) | shared | shared |
+
+**Forward note on IAM:** the CodePipeline role created during Phase 5 setup must not be granted unrestricted `iam:PassRole`. Scope it to the exact `devops-g5-ecs-execution-role` and `devops-g5-ecs-task-role` ARNs used by this group's services. Flagged here ahead of Phase 5 so the platform owner isn't surprised by the requirement when setting up the pipeline.
 
 ### 5.4 Image tagging
 
