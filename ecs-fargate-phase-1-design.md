@@ -222,16 +222,16 @@ A public Internet Protocol address on Fargate tasks does not mean public access.
 
 ## 4. Resource ownership
 
-Platform ownership rotates among the three service owners. Owners may advise each other; they do not operate another owner’s console.
+Owners may advise each other; they do not operate another owner’s console.
 
 ### 4.1 Ownership map
 
-| Role | Type | Owns |
-|---|---|---|
-| Platform owner | Rotated | Cluster, Service Connect namespace `group5.internal`, Application Load Balancer, target group, listener, CodeConnections, shared Identity and Access Management(IAM) patterns, naming and tagging |
-| Service A owner | Individual | Image, Elastic Container Registry `devops-g5-service-a`, task definition, `devops-g5-service-a-sg`, Elastic Container Service service-a (desired **2**, Application Load Balancer later), pipeline for service-a, scar log for service-a |
-| Service B owner | Individual | Image, Elastic Container Registry `devops-g5-service-b`, task definition, `devops-g5-service-b-sg`, Elastic Container Service service-b (desired **1**, no Application Load Balancer), pipeline for service-b, scar log for service-b |
-| Service C owner | Individual | Image, Elastic Container Registry `devops-g5-service-c`, task definition, `devops-g5-service-c-sg`, Elastic Container Service service-c (desired **1**, no Application Load Balancer), pipeline for service-c, scar log for service-c |
+| Role | Person | Type | Owns |
+|---|---|---|---|
+| Platform owner | Weekly rotation: **Mary → Warga → Sharon → Mary…** (one week each) | Rotated | Cluster, Service Connect namespace `group5.internal`, Application Load Balancer, target group, listener, CodeConnections, shared Identity and Access Management patterns, naming and tagging |
+| Service A owner | **Mary** | Individual | Image, Elastic Container Registry `devops-g5-service-a`, task definition, `devops-g5-service-a-sg`, Elastic Container Service service-a (desired **2**, Application Load Balancer later), pipeline for service-a, scar log for service-a |
+| Service B owner | **Warga** | Individual | Image, Elastic Container Registry `devops-g5-service-b`, task definition, `devops-g5-service-b-sg`, Elastic Container Service service-b (desired **1**, no Application Load Balancer), pipeline for service-b, scar log for service-b |
+| Service C owner | **Sharon** | Individual | Image, Elastic Container Registry `devops-g5-service-c`, task definition, `devops-g5-service-c-sg`, Elastic Container Service service-c (desired **1**, no Application Load Balancer), pipeline for service-c, scar log for service-c |
 
 ### 4.2 Resource to owner
 
