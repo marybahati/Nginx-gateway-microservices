@@ -46,28 +46,6 @@ Before we enforce service-a → service-c denial in Amazon Web Services, we will
 
 ---
 
-## 0. Pre-Gate-2 action items
-
-These are required code and image changes, not AWS configuration. They must land before the resources that depend on them are created, or Gate 2 enforcement will break the running application.
-
-### 0.1 Application code changes
-
-| Change | File | Owner | Must land before |
-|---|---|---|---|
-| Add `?shallow=1` support to `/health` — skip the service-c dependency check when present | `services/service-a/index.js` (or `shared/health.js`) | Service A owner | ALB target group creation |
-| Confirm `/lab/fail` doesn't call service-c directly from A (route through B if it does) | `services/service-a/index.js` | Service A owner | Sabotage round (Phase 4.2) |
-| Decide whether `wait-for-deps.mjs` still polls service-c from A, and whether that's acceptable pre-steady-state or needs removing | `scripts/wait-for-deps.mjs` | Service A owner | Before first ECS deploy |
-
-Without this, the network-level "service-a → service-c: denied" rule will break the application at the health-check layer, since `/health` currently reports `service-c` status directly.
-
-### 0.2 Image changes
-
-| Change | Owner | Notes |
-|---|---|---|
-| Add `curl` (or use Node's built-in `http` module for the container health check command) to each service's Dockerfile | Each service owner | Base image `node:20.19.5-alpine3.22` currently has no extra OS packages. Assignment requires a shell-based health check and requires `curl`/`wget` for ECS Exec connectivity tests, and explicitly says not to install diagnostic tools manually inside a running task — they must be baked into the image. |
-
----
-
 ## 1. Dependency graph
 
 ### 1.1 Create-order graph
@@ -217,8 +195,6 @@ These cover host (image pull), forward wiring (service-a → service-b), and the
 | service-c | service-a | 3001 | Yes | service-c security group → service-a security group reference on port 3001 (callback) |
 
 A public Internet Protocol address on Fargate tasks does not mean public access. Security groups enforce the contract.
-
-Security group egress: all four custom security groups use the default "allow all outbound" rule created automatically with new security groups. This is sufficient for this lab (Elastic Container Registry pulls, Service Connect calls, and the service-c → service-a callback all require outbound reach), and egress is not being restricted at this stage.
 
 ### 3.2 Pair agreements
 
