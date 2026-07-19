@@ -9,7 +9,7 @@
 | Service Connect namespace | `group5.internal` |
 | Repository | Nginx-gateway-microservices (monorepo) |
 | Target network | Default Virtual Private Cloud · public subnets in two Availability Zones · public Internet Protocol address enabled for lab outbound access |
-| Status | Design complete · no Amazon Web Services resources created |
+| Status | Design complete · no AWS resources created |
 
 ### Standard tags
 
@@ -164,7 +164,7 @@ service-a  POST /greeting-rcvd
 
 ## 2. Failure predictions
 
-| # | Broken edge | User symptom | Amazon Web Services evidence |
+| # | Broken edge | User symptom | AWS evidence |
 |---|---|---|---|
 | 1 | **Elastic Container Service → Elastic Container Registry** — wrong image tag, missing pull permissions, or bad execution role | Application Load Balancer never becomes healthy; service-a does not reach steady RUNNING / HEALTHY | Elastic Container Service service events show image pull failure; stopped-task reason; CloudWatch may be empty if the task never starts |
 | 2 | **service-a → service-b port 3002** — wrong Service Connect name, wrong named port, or service-a security group not allowed into service-b security group | Client reaches Application Load Balancer → service-a, but greet fails. Shallow service-a health can still look OK | Elastic Container Service Exec from service-a: `curl http://service-b:3002/health` times out or is refused; security group rules missing service-a → service-b; service-a logs show forward failure |
@@ -282,7 +282,7 @@ Owners may advise each other; they do not operate another owner's console.
 
 ## 5. Expected resource names
 
-All Amazon Web Services resource names use prefix `devops-g5-`. The Service Connect namespace is `group5.internal`.
+All AWS resource names use prefix `devops-g5-`. The Service Connect namespace is `group5.internal`.
 
 ### 5.1 Platform and networking
 
