@@ -5,18 +5,17 @@ const { initTracing } = require("../../shared/tracing");
 const { createServiceMetrics } = require("../../shared/metrics");
 const { createObservabilityMiddleware } = require("../../shared/middleware");
 const { buildHealthResponse } = require("../../shared/health");
+const { getServiceVersion } = require("../../shared/version");
 
 initTracing("service-a");
 
 const PORT = Number(process.env.PORT) || 3001;
 const BIND_HOST = process.env.BIND_HOST || "127.0.0.1";
 const SERVICE_NAME = "service-a";
+const SERVICE_VERSION = getServiceVersion();
 const SERVICE_B_URL = process.env.SERVICE_B_URL || "http://service-b:3002";
-const SERVICE_C_URL = process.env.SERVICE_C_URL || "http://service-c:3003";
 const SERVICE_B_HEALTH_URL =
   process.env.SERVICE_B_HEALTH_URL || "http://service-b:3002/health";
-const SERVICE_C_HEALTH_URL =
-  process.env.SERVICE_C_HEALTH_URL || "http://service-c:3003/health";
 const CALLBACK_TIMEOUT_MS = Number(process.env.CALLBACK_TIMEOUT_MS) || 30000;
 
 const metrics = createServiceMetrics(SERVICE_NAME);
@@ -51,11 +50,22 @@ app.get("/health", async (req, res) => {
     SERVICE_NAME,
     {
       "service-b": SERVICE_B_HEALTH_URL,
-      "service-c": SERVICE_C_HEALTH_URL,
     },
     { shallow }
   );
-  res.status(200).json(health);
+  res.status(200).json({
+    ...health,
+    version: SERVICE_VERSION,
+    status: health.status === "ok" ? "ok" : health.status,
+  });
+});
+
+app.get("/version", (_req, res) => {
+  res.status(200).json({
+    service: SERVICE_NAME,
+    version: SERVICE_VERSION,
+    status: "ok",
+  });
 });
 
 app.get("/metrics", async (_req, res) => {
@@ -135,10 +145,11 @@ app.get("/lab/slow", async (req, res) => {
   }
 });
 
+// Lab-only: failure path via service-b (must not call service-c — AWS traffic contract).
 app.get("/lab/fail", async (req, res) => {
   const requestId = getRequestId(req);
   try {
-    const response = await fetch(`${SERVICE_C_URL}/fail`, {
+    const response = await fetch(`${SERVICE_B_URL}/fail`, {
       headers: { "X-Request-ID": requestId },
     });
     const body = await response.json();

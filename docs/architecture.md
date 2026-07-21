@@ -46,7 +46,7 @@ Client / load test
 Lab-only routes exposed through the gateway:
 
 - `GET /service-a/lab/slow` → `service-b /slow`
-- `GET /service-a/lab/fail` → `service-c /fail`
+- `GET /service-a/lab/fail` → `service-b /fail`
 
 ## Telemetry flow
 

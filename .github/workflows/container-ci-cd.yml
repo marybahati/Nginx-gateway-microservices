@@ -1,4 +1,8 @@
-name: Container CI/CD
+name: Verify
+
+# PR / main gate only. Does NOT publish images or deploy to AWS.
+# Deploy path: merge to main → CodeConnections → CodePipeline → CodeBuild
+#   (buildspecs/service-*.yml) → ECR → ECS via imagedefinitions.json.
 
 on:
   pull_request:
@@ -11,12 +15,11 @@ permissions:
   contents: read
 
 env:
-  APP_NAME: devops100
   NODE_VERSION: "20"
 
 jobs:
   verify:
-    name: Verify code, build, and containers
+    name: Unit tests
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -51,18 +54,8 @@ jobs:
         working-directory: ${{ matrix.path }}
         run: npm run build --if-present
 
-      - name: Build Docker image locally
-        # Context is the repo root, not matrix.path, because each Dockerfile
-        # COPYs shared/ and scripts/wait-for-deps.mjs from outside its service dir.
-        run: |
-          docker build \
-            --pull \
-            -t ${{ matrix.service }}:${{ github.sha }} \
-            -f ${{ matrix.path }}/Dockerfile \
-            .
-
   verify-compose:
-    name: Verify Docker Compose stack
+    name: Local Compose smoke (nginx gateway)
     runs-on: ubuntu-latest
     needs: verify
 
@@ -73,71 +66,15 @@ jobs:
       - name: Validate Compose file
         run: docker compose config
 
-      - name: Build Compose stack
-        run: docker compose build --pull
-
-      - name: Start Compose stack
-        run: docker compose up -d --wait
+      - name: Build and start Compose stack
+        run: docker compose up -d --build --wait
 
       - name: Show running services
         run: docker compose ps
 
-      - name: Check gateway health
+      - name: Check local gateway health
         run: curl --fail --silent --show-error http://localhost:8080/service-a/health | python3 -m json.tool
 
       - name: Stop Compose stack
         if: always()
         run: docker compose down -v
-
-  publish:
-    name: Publish Docker images
-    runs-on: ubuntu-latest
-    needs: verify-compose
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    strategy:
-      matrix:
-        include:
-          - service: service-a
-            path: ./services/service-a
-          - service: service-b
-            path: ./services/service-b
-          - service: service-c
-            path: ./services/service-c
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ vars.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Set short commit hash
-        id: version
-        run: echo "short_sha=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
-
-      - name: Build and push image
-        # Context is the repo root (see verify job) so shared/ and scripts/ are in scope.
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ${{ matrix.path }}/Dockerfile
-          platforms: linux/amd64
-          pull: true
-          push: true
-          tags: |
-            ${{ vars.DOCKERHUB_USERNAME }}/${{ env.APP_NAME }}-${{ matrix.service }}:sha-${{ steps.version.outputs.short_sha }}
-          labels: |
-            org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-
-      - name: Write deployment summary
-        run: |
-          echo "### Published Image" >> "$GITHUB_STEP_SUMMARY"
-          echo "Service: ${{ matrix.service }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "Image: ${{ vars.DOCKERHUB_USERNAME }}/${{ env.APP_NAME }}-${{ matrix.service }}:sha-${{ steps.version.outputs.short_sha }}" >> "$GITHUB_STEP_SUMMARY"

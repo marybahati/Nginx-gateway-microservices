@@ -616,11 +616,13 @@ Images:
 - `warga24/devops100-service-b:sha-1a08128`
 - `warga24/devops100-service-c:sha-1a08128`
 
-GitHub Actions runs PR verification on every pull request to `main`: `npm ci`, `npm test`, `npm run build --if-present`, local Docker image builds, `docker compose config`, Compose build, Compose startup, and the Nginx health check. Docker Hub publishing runs only after a successful push to `main`.
+GitHub Actions runs **verify only** on PRs and pushes to `main`: unit tests + local Compose smoke. It does **not** publish Docker Hub images and does **not** deploy to AWS.
 
-Required GitHub settings:
-- Repository variable: `DOCKERHUB_USERNAME`
-- Repository secret: `DOCKERHUB_TOKEN`
+**AWS deploy path (Fargate):** merge to `main` → CodeConnections → CodePipeline → CodeBuild (`buildspecs/service-*.yml`) → ECR (SHA tag) → ECS rolling deploy. Pipelines and connections already exist in `eu-west-1` in pipelines under aws codepipeline.
+
+Public entry on AWS is the Application Load Balancer (`devops-g5-alb`), not nginx. Keep nginx in `docker-compose.yml` for local development only.
+
+Optional local Compose with pre-built images (`docker-compose.prod.yml`) still uses Docker Hub variables if you choose that path; it is **not** the Fargate deploy path.
 
 ### Deploy
 
@@ -654,7 +656,8 @@ Production deployment uses `docker-compose.prod.yml`, which pulls version-tagged
 | GET | `/metrics` | Prometheus metrics |
 | GET | `/greet-service-b` | `{ "request_id": "...", "status": "success", "message": "Request completed successfully" }` |
 | GET | `/lab/slow` | Lab-only — triggers `service-b /slow` |
-| GET | `/lab/fail` | Lab-only — triggers `service-c /fail` |
+| GET | `/lab/fail` | Lab-only — triggers `service-b /fail` (does not call service-c) |
+| GET | `/version` | `{ "service": "service-a", "version": "<sha>", "status": "ok" }` |
 | POST | `/greeting-rcvd` | `{ "status": "received" }` — callback from Service C |
 
 ### Service B (`service-b`, port 3002, internal)
@@ -681,7 +684,7 @@ Production deployment uses `docker-compose.prod.yml`, which pulls version-tagged
 
 ```
 ├── .github/workflows/
-│   └── container-ci-cd.yml   # PR CI, Compose verification, main-only Docker Hub publish
+│   └── container-ci-cd.yml   # PR/main verify only (tests + local Compose smoke)
 ├── .dockerignore             # Build context exclusions
 ├── .env.example              # Non-secret production deploy variables
 ├── alert-rules.yml           # Prometheus alert rules

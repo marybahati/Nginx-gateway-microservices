@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 #
-# wait-for-deps.sh — Block Service A startup until B and C health endpoints respond.
-# Docker Compose uses scripts/wait-for-deps.mjs instead (no curl/bash required).
+# wait-for-deps.sh — Block Service A startup until service-b health responds.
+# Does not wait on service-c (traffic contract: service-a must not call service-c).
+# Docker Compose uses scripts/wait-for-deps.mjs instead.
 #
 set -Eeuo pipefail
 
 DEPS=(
   "${SERVICE_B_HEALTH_URL:-http://service-b:3002/health}"
-  "${SERVICE_C_HEALTH_URL:-http://service-c:3003/health}"
 )
 
 MAX_ATTEMPTS="${WAIT_FOR_DEPS_ATTEMPTS:-30}"
