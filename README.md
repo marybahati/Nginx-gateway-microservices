@@ -607,14 +607,14 @@ Full validation evidence: [docs/CONTAINER_VALIDATION.md](docs/CONTAINER_VALIDATI
 
 ### Latest Deployed Version
 
-Commit: `1a081280000000000000000000000000000000000`
+Commit: `85a3a32eaef81f40e0b98e81fa995bfd0efdbb2f`
 
-Image tag: `sha-1a08128`
+Image tag: `sha-85a3a32`
 
 Images:
-- `warga24/devops100-service-a:sha-1a08128`
-- `warga24/devops100-service-b:sha-1a08128`
-- `warga24/devops100-service-c:sha-1a08128`
+- `827478161993.dkr.ecr.eu-west-1.amazonaws.com/devops-g5-service-a:85a3a32`
+- `827478161993.dkr.ecr.eu-west-1.amazonaws.com/devops-g5-service-b:85a3a32`
+- `827478161993.dkr.ecr.eu-west-1.amazonaws.com/devops-g5-service-c:85a3a32`
 
 GitHub Actions runs **verify only** on PRs and pushes to `main`: unit tests + local Compose smoke. It does **not** publish Docker Hub images and does **not** deploy to AWS.
 
