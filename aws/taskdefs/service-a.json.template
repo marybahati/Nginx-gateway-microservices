@@ -1,0 +1,50 @@
+{
+  "family": "devops-g5-td-service-a",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "256",
+  "memory": "512",
+  "executionRoleArn": "${EXECUTION_ROLE_ARN}",
+  "taskRoleArn": "${TASK_ROLE_ARN}",
+  "runtimePlatform": {
+    "cpuArchitecture": "X86_64",
+    "operatingSystemFamily": "LINUX"
+  },
+  "containerDefinitions": [
+    {
+      "name": "service-a",
+      "image": "${IMAGE_URI}",
+      "essential": true,
+      "portMappings": [
+        {
+          "name": "service-a",
+          "containerPort": 3001,
+          "protocol": "tcp",
+          "appProtocol": "http"
+        }
+      ],
+      "environment": [
+        { "name": "BIND_HOST", "value": "0.0.0.0" },
+        { "name": "PORT", "value": "3001" },
+        { "name": "SERVICE_B_URL", "value": "http://service-b:3002" },
+        { "name": "SERVICE_B_HEALTH_URL", "value": "http://service-b:3002/health" },
+        { "name": "OTEL_SDK_DISABLED", "value": "true" }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/devops-g5-service-a",
+          "awslogs-region": "${AWS_REGION}",
+          "awslogs-stream-prefix": "service-a"
+        }
+      },
+      "healthCheck": {
+        "command": ["CMD-SHELL", "curl -sf http://127.0.0.1:3001/health?shallow=1 || exit 1"],
+        "interval": 30,
+        "timeout": 5,
+        "retries": 3,
+        "startPeriod": 90
+      }
+    }
+  ]
+}

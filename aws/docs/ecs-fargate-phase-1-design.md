@@ -42,7 +42,7 @@ The `X-Request-ID` header propagates from service-a → service-b → service-c 
 
 **Traffic design decision:** service-a → service-c is denied. The greet path does not need service-a to call service-c; it needs service-c to call service-a (callback). That callback is included in our contracts.
 
-Before we enforce service-a → service-c denial in Amazon Web Services, we will remove three local paths that currently reach service-c from service-a: `/lab/fail`, non-shallow `/health` dependency checks, and `wait-for-deps.mjs` waiting on service-c. Until then, Application Load Balancer health checks use `/health?shallow=1`.
+**Code alignment (done):** `wait-for-deps` waits on service-b only; service-a `/health` checks service-b only; `/lab/fail` calls service-b `/fail` (not service-c). Application Load Balancer health can use `/health` or `/health?shallow=1`. Each service exposes `/version` with `SERVICE_VERSION` / Git commit SHA.
 
 ---
 
@@ -78,7 +78,7 @@ Task definitions (Fargate / awsvpc)
   └── devops-g5-td-service-c
         │
 Elastic Container Service services
-  ├── devops-g5-svc-service-a  (desired count 2, Application Load Balancer later)
+  ├── devops-g5-svc-service-a  (desired count 1, Application Load Balancer later)
   ├── devops-g5-svc-service-b  (desired count 1, no Application Load Balancer)
   └── devops-g5-svc-service-c  (desired count 1, no Application Load Balancer)
         │
@@ -131,7 +131,7 @@ Internet users
 devops-g5-alb  (replaces Nginx)
       │ port 3001  (Application Load Balancer security group → service-a security group)
       ▼
-service-a.group5.internal :3001   [Elastic Container Service service-a × 2]
+service-a.group5.internal :3001   [Elastic Container Service service-a × 1]
       │ port 3002  (service-a security group → service-b security group)  Service Connect
       ▼
 service-b.group5.internal :3002   [Elastic Container Service service-b × 1]
@@ -243,7 +243,7 @@ Owners may advise each other; they do not operate another owner's console.
 | Role | Person | Type | Owns |
 |---|---|---|---|
 | Platform owner | Weekly rotation: **Mary → Warga → Sharon → Mary…** (one week each) | Rotated | Cluster, Service Connect namespace `group5.internal`, Application Load Balancer, target group, listener, CodeConnections, shared Identity and Access Management patterns, naming and tagging |
-| Service A owner | **Mary** | Individual | Image, Elastic Container Registry `devops-g5-service-a`, task definition, `devops-g5-service-a-sg`, Elastic Container Service service-a (desired **2**, Application Load Balancer later), pipeline for service-a, scar log for service-a |
+| Service A owner | **Mary** | Individual | Image, Elastic Container Registry `devops-g5-service-a`, task definition, `devops-g5-service-a-sg`, Elastic Container Service service-a (desired **1**, Application Load Balancer later), pipeline for service-a, scar log for service-a |
 | Service B owner | **Warga** | Individual | Image, Elastic Container Registry `devops-g5-service-b`, task definition, `devops-g5-service-b-sg`, Elastic Container Service service-b (desired **1**, no Application Load Balancer), pipeline for service-b, scar log for service-b |
 | Service C owner | **Sharon** | Individual | Image, Elastic Container Registry `devops-g5-service-c`, task definition, `devops-g5-service-c-sg`, Elastic Container Service service-c (desired **1**, no Application Load Balancer), pipeline for service-c, scar log for service-c |
 
@@ -270,7 +270,7 @@ Owners may advise each other; they do not operate another owner's console.
 
 | Service | Desired count | CPU | Memory | Application Load Balancer | Public Internet Protocol address | Circuit breaker + rollback | Elastic Container Service Exec |
 |---|---|---|---|---|---|---|---|
-| service-a | **2** | 256 (.25 vCPU) | 512 MB | Yes (after Application Load Balancer is wired) | Enabled | Enabled | Enabled |
+| service-a | **1** | 256 (.25 vCPU) | 512 MB | Yes (after Application Load Balancer is wired) | Enabled | Enabled | Enabled |
 | service-b | **1** | 256 (.25 vCPU) | 512 MB | No | Enabled | Enabled | Enabled |
 | service-c | **1** | 256 (.25 vCPU) | 512 MB | No | Enabled | Enabled | Enabled |
 
@@ -320,7 +320,7 @@ All AWS resource names use prefix `devops-g5-`. The Service Connect namespace is
 | CodeBuild | `devops-g5-codebuild-service-a` | `devops-g5-codebuild-service-b` | `devops-g5-codebuild-service-c` |
 | CodePipeline | `devops-g5-pipeline-service-a` | `devops-g5-pipeline-service-b` | `devops-g5-pipeline-service-c` |
 | Build specification | `buildspecs/service-a.yml` | `buildspecs/service-b.yml` | `buildspecs/service-c.yml` |
-| CodeConnections | `devops-g5-codeconnections-github` (shared) | shared | shared |
+| CodeConnections | `devops-g5-github-connection` (shared) | shared | shared |
 
 **Forward note on IAM:** the CodePipeline role created during Phase 5 setup must not be granted unrestricted `iam:PassRole`. Scope it to the exact `devops-g5-ecs-execution-role` and `devops-g5-ecs-task-role` ARNs used by this group's services. Flagged here ahead of Phase 5 so the platform owner isn't surprised by the requirement when setting up the pipeline.
 

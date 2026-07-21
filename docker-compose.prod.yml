@@ -63,10 +63,9 @@ services:
     environment:
       BIND_HOST: 0.0.0.0
       SERVICE_B_URL: http://service-b:3002
-      SERVICE_C_URL: http://service-c:3003
       SERVICE_B_HEALTH_URL: http://service-b:3002/health
-      SERVICE_C_HEALTH_URL: http://service-c:3003/health
       OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
+      SERVICE_VERSION: ${IMAGE_TAG}
     depends_on:
       service-b:
         condition: service_healthy

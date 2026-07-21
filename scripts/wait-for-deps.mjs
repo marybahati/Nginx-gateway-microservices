@@ -1,11 +1,10 @@
 /**
- * wait-for-deps.mjs — Block Service A startup until B and C health endpoints respond.
- * Used as a pre-start gate in the service-a Docker container.
+ * wait-for-deps.mjs — Block Service A startup until service-b health responds.
+ * Does not wait on service-c (Amazon Web Services traffic contract forbids service-a → service-c).
  */
 
 const deps = [
   process.env.SERVICE_B_HEALTH_URL || "http://service-b:3002/health",
-  process.env.SERVICE_C_HEALTH_URL || "http://service-c:3003/health",
 ];
 
 const maxAttempts = Number(process.env.WAIT_FOR_DEPS_ATTEMPTS || 30);

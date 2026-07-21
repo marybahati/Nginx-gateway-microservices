@@ -5,12 +5,14 @@ const { initTracing } = require("../../shared/tracing");
 const { createServiceMetrics } = require("../../shared/metrics");
 const { createObservabilityMiddleware } = require("../../shared/middleware");
 const { buildHealthResponse } = require("../../shared/health");
+const { getServiceVersion } = require("../../shared/version");
 
 initTracing("service-c");
 
 const PORT = Number(process.env.PORT) || 3003;
 const BIND_HOST = process.env.BIND_HOST || "127.0.0.1";
 const SERVICE_NAME = "service-c";
+const SERVICE_VERSION = getServiceVersion();
 const SERVICE_A_CALLBACK_URL =
   process.env.SERVICE_A_CALLBACK_URL || "http://service-a:3001";
 const SERVICE_A_HEALTH_URL =
@@ -33,7 +35,18 @@ function sleep(ms) {
 app.get("/health", async (req, res) => {
   const shallow = req.query.shallow === "1";
   const health = await buildHealthResponse(SERVICE_NAME, {}, { shallow });
-  res.status(200).json(health);
+  res.status(200).json({
+    ...health,
+    version: SERVICE_VERSION,
+  });
+});
+
+app.get("/version", (_req, res) => {
+  res.status(200).json({
+    service: SERVICE_NAME,
+    version: SERVICE_VERSION,
+    status: "ok",
+  });
 });
 
 app.get("/metrics", async (_req, res) => {

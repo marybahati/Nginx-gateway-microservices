@@ -1,0 +1,37 @@
+# CodeBuild buildspec for service-c
+# Triggered by CodePipeline on merge to main (CodeConnections → GitHub).
+# Builds linux/amd64, pushes to ECR, writes imagedefinitions.json for ECS deploy.
+version: 0.2
+
+env:
+  variables:
+    SERVICE_NAME: service-c
+    ECR_REPOSITORY: devops-g5-service-c
+    CONTAINER_NAME: service-c
+
+phases:
+  pre_build:
+    commands:
+      - echo "Resolving account / image tag from pipeline source..."
+      - AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+      - echo "AWS_ACCOUNT_ID=$AWS_ACCOUNT_ID"
+      - aws ecr get-login-password --region "$AWS_DEFAULT_REGION" | docker login --username AWS --password-stdin "$AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com"
+      - IMAGE_TAG=$(echo "$CODEBUILD_RESOLVED_SOURCE_VERSION" | cut -c1-7)
+      - IMAGE_URI="$AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$ECR_REPOSITORY:$IMAGE_TAG"
+      - echo "Image URI=$IMAGE_URI"
+  build:
+    commands:
+      - echo "Running service-c checks..."
+      - cd services/service-c && npm ci && npm test && npm run build --if-present && cd ../..
+      - echo "Building linux/amd64 Docker image..."
+      - docker build --platform linux/amd64 -f services/service-c/Dockerfile --build-arg SERVICE_VERSION="$IMAGE_TAG" -t "$IMAGE_URI" .
+  post_build:
+    commands:
+      - echo "Pushing image to Elastic Container Registry..."
+      - docker push "$IMAGE_URI"
+      - printf '[{"name":"%s","imageUri":"%s"}]' "$CONTAINER_NAME" "$IMAGE_URI" > imagedefinitions.json
+      - cat imagedefinitions.json
+
+artifacts:
+  files:
+    - imagedefinitions.json
