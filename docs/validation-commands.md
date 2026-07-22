@@ -1,0 +1,1023 @@
+# Validation Commands and Expected Outputs
+
+All commands run from your engineer machine unless noted.
+Replace `<task-id-a>`, `<task-id-b>`, `<task-id-c>` with the short task IDs shown below.
+
+```
+service-a task: ee9ba1708dba492e9e35c24531a77f74
+service-b task: ddbacb6c6a1a49f69c34224881e53569
+service-c task: 295aa32c6a6e4138a996fcf0fa7d73cb
+ALB DNS:        devops-g5-alb-751035582.eu-west-1.elb.amazonaws.com
+```
+
+---
+
+## Phase 2 — Per-service checkpoint
+
+### 2a. Task state: RUNNING and container health: HEALTHY
+
+```bash
+aws ecs describe-tasks \
+  --cluster devops-g5-cluster \
+  --tasks ee9ba1708dba492e9e35c24531a77f74 \
+        ddbacb6c6a1a49f69c34224881e53569 \
+        295aa32c6a6e4138a996fcf0fa7d73cb \
+  --region eu-west-1 \
+  --query 'tasks[*].{task:taskArn,lastStatus:lastStatus,health:healthStatus,image:containers[0].image}' \
+  --output table
+```
+
+Expected output:
+```
+----------------------------------------------------------------------
+|                         DescribeTasks                              |
++----------+----------+------------------------------------------+--+
+| health   |lastStatus| image                                    |  |
++----------+----------+------------------------------------------+--+
+| HEALTHY  | RUNNING  | 827478161993.dkr.ecr.eu-west-1...service-a:85a3a32 |
+| HEALTHY  | RUNNING  | 827478161993.dkr.ecr.eu-west-1...service-b:85a3a32 |
+| HEALTHY  | RUNNING  | 827478161993.dkr.ecr.eu-west-1...service-c:85a3a32 |
++----------+----------+------------------------------------------+--+
+```
+
+### 2b. Version: current Git SHA visible through ALB
+
+```bash
+curl -s http://devops-g5-alb-751035582.eu-west-1.elb.amazonaws.com/version | python3 -m json.tool
+```
+
+Expected output:
+```json
+{
+    "service": "service-a",
+    "version": "85a3a32",
+    "status": "ok"
+}
+```
+
+### 2c. CloudWatch: application log visible
+
+```bash
+aws logs tail /ecs/devops-g5-service-a --since 10m --region eu-west-1 | head -5
+aws logs tail /ecs/devops-g5-service-b --since 10m --region eu-west-1 | head -5
+aws logs tail /ecs/devops-g5-service-c --since 10m --region eu-west-1 | head -5
+```
+
+Expected output (one line per service, JSON structured):
+```
+2026-07-21T... service-a {"timestamp":"...","service":"service-a","event":"request_received",...}
+2026-07-21T... service-b {"timestamp":"...","service":"service-b","event":"request_received",...}
+2026-07-21T... service-c {"timestamp":"...","service":"service-c","event":"request_received",...}
+```
+
+### 2d. ECS Exec: shell access succeeds
+
+```bash
+aws ecs execute-command \
+  --cluster devops-g5-cluster \
+  --task ee9ba1708dba492e9e35c24531a77f74 \
+  --container service-a \
+  --interactive \
+  --command "/bin/sh" \
+  --region eu-west-1
+```
+
+Expected output:
+```
+The Session Manager plugin was installed successfully. Use the AWS CLI to start a session.
+Starting session with SessionId: ecs-execute-command-...
+#
+```
+
+---
+
+## Phase 3 — Gate 2: Runtime and Security Proof
+
+### 3a. Positive test — Internet → ALB (engineer machine)
+
+```bash
+curl -i http://devops-g5-alb-751035582.eu-west-1.elb.amazonaws.com/health
+```
+
+Expected output:
+```
+HTTP/1.1 200 OK
+...
+{"service":"service-a","status":"ok","dependencies":{"service-b":"ok","service-c":"ok"}}
+```
+
+### 3b. Positive test — ALB → A → B → C (full chain)
+
+```bash
+curl -s http://devops-g5-alb-751035582.eu-west-1.elb.amazonaws.com/greet-service-b \
+  -H "X-Request-ID: gate2-test-001" | python3 -m json.tool
+```
+
+Expected output:
+```json
+{
+    "request_id": "gate2-test-001",
+    "status": "success",
+    "message": "Request completed successfully"
+}
+```
+
+### 3c. Positive test — A → B (inside service-a task via ECS Exec)
+
+```bash
+aws ecs execute-command \
+  --cluster devops-g5-cluster \
+  --task ee9ba1708dba492e9e35c24531a77f74 \
+  --container service-a \
+  --interactive \
+  --command "curl -i --max-time 5 http://service-b:3002/health" \
+  --region eu-west-1
+```
+
+Expected output:
+```
+HTTP/1.1 200 OK
+{"service":"service-b","status":"ok","dependencies":{"service-c":"ok"}}
+```
+
+### 3d. Positive test — B → C (inside service-b task via ECS Exec)
+
+```bash
+aws ecs execute-command \
+  --cluster devops-g5-cluster \
+  --task ddbacb6c6a1a49f69c34224881e53569 \
+  --container service-b \
+  --interactive \
+  --command "curl -i --max-time 5 http://service-c:3003/health" \
+  --region eu-west-1
+```
+
+Expected output:
+```
+HTTP/1.1 200 OK
+{"service":"service-c","status":"ok","dependencies":{}}
+```
+
+### 3e. Negative test — Internet → A direct (engineer machine, must be DENIED)
+
+```bash
+# Get service-a task public IP first
+TASK_IP=$(aws ecs describe-tasks \
+  --cluster devops-g5-cluster \
+  --tasks ee9ba1708dba492e9e35c24531a77f74 \
+  --region eu-west-1 \
+  --query 'tasks[0].attachments[0].details[?name==`networkInterfaceId`].value' \
+  --output text | xargs -I{} aws ec2 describe-network-interfaces \
+  --network-interface-ids {} --region eu-west-1 \
+  --query 'NetworkInterfaces[0].Association.PublicIp' --output text)
+
+curl --connect-timeout 5 http://$TASK_IP:3001/health && echo "FAIL: exposed" || echo "OK: blocked"
+```
+
+Expected output:
+```
+curl: (28) Connection timed out after 5000 milliseconds
+OK: blocked
+```
+
+### 3f. Negative test — Internet → B direct (must be DENIED)
+
+```bash
+TASK_IP_B=$(aws ecs describe-tasks \
+  --cluster devops-g5-cluster \
+  --tasks ddbacb6c6a1a49f69c34224881e53569 \
+  --region eu-west-1 \
+  --query 'tasks[0].attachments[0].details[?name==`networkInterfaceId`].value' \
+  --output text | xargs -I{} aws ec2 describe-network-interfaces \
+  --network-interface-ids {} --region eu-west-1 \
+  --query 'NetworkInterfaces[0].Association.PublicIp' --output text)
+
+curl --connect-timeout 5 http://$TASK_IP_B:3002/health && echo "FAIL: exposed" || echo "OK: blocked"
+```
+
+Expected output:
+```
+curl: (28) Connection timed out after 5000 milliseconds
+OK: blocked
+```
+
+### 3g. Negative test — Internet → C direct (must be DENIED)
+
+```bash
+TASK_IP_C=$(aws ecs describe-tasks \
+  --cluster devops-g5-cluster \
+  --tasks 295aa32c6a6e4138a996fcf0fa7d73cb \
+  --region eu-west-1 \
+  --query 'tasks[0].attachments[0].details[?name==`networkInterfaceId`].value' \
+  --output text | xargs -I{} aws ec2 describe-network-interfaces \
+  --network-interface-ids {} --region eu-west-1 \
+  --query 'NetworkInterfaces[0].Association.PublicIp' --output text)
+
+curl --connect-timeout 5 http://$TASK_IP_C:3003/health && echo "FAIL: exposed" || echo "OK: blocked"
+```
+
+Expected output:
+```
+curl: (28) Connection timed out after 5000 milliseconds
+OK: blocked
+```
+
+### 3h. Negative test — A → C (inside service-a task, must be DENIED)
+
+With Service Connect, `service-c` resolves to a local Envoy sidecar proxy (`127.255.0.x`) — not the task IP directly. `nc` will show the proxy port as open. Use `curl -sv` to get the full picture: DNS resolution, connection attempt, and the HTTP response from the proxy:
+
+```bash
+aws ecs execute-command \
+  --cluster devops-g5-cluster \
+  --task ee9ba1708dba492e9e35c24531a77f74 \
+  --container service-a \
+  --interactive \
+  --command "sh -c 'echo === DNS ===; nslookup service-c; echo; echo === HTTP A->C ===; curl -sv --max-time 5 http://service-c:3003/health 2>&1; echo; echo exit=$?'" \
+  --region eu-west-1
+```
+
+Expected output:
+```
+=== DNS ===
+Name:      service-c
+Address 1: 127.255.0.3    <-- Service Connect local proxy, not task IP
+
+=== HTTP A->C ===
+* Trying 127.255.0.3:3003...
+* Connected to service-c (127.255.0.3) port 3003
+> GET /health HTTP/1.1
+> Host: service-c:3003
+...
+< HTTP/1.1 504 Gateway Timeout
+{"message":"upstream connect error or disconnect/reset before headers"}
+
+exit=0
+```
+
+The `504 Gateway Timeout` from the Service Connect proxy is the proof that A→C is blocked — the local proxy accepted the connection but could not reach the actual service-c task because `devops-g5-service-c-sg` only allows ingress from `devops-g5-service-b-sg`, not from `devops-g5-service-a-sg`.
+
+If this returns `200` instead of `504`, the service-c security group has an incorrect ingress rule allowing service-a.
+
+### 3i. Security group rules proof
+
+```bash
+# ALB SG — inbound :80 from internet
+aws ec2 describe-security-groups --group-ids sg-0e0a3697d6f2bdd6a \
+  --region eu-west-1 \
+  --query 'SecurityGroups[0].IpPermissions' --output table
+
+# Service-A SG — inbound :3001 from ALB SG only
+aws ec2 describe-security-groups --group-ids sg-004dfad088190b075 \
+  --region eu-west-1 \
+  --query 'SecurityGroups[0].IpPermissions' --output table
+
+# Service-B SG — inbound :3002 from service-a SG only
+aws ec2 describe-security-groups --group-ids sg-08c4cf59960d46bde \
+  --region eu-west-1 \
+  --query 'SecurityGroups[0].IpPermissions' --output table
+
+# Service-C SG — inbound :3003 from service-b SG only
+aws ec2 describe-security-groups --group-ids sg-0a48cc8721a9f782a \
+  --region eu-west-1 \
+  --query 'SecurityGroups[0].IpPermissions' --output table
+```
+
+Expected — service-a SG shows only ALB SG as source, service-b SG shows only service-a SG, service-c SG shows only service-b SG. No `0.0.0.0/0` on application ports.
+
+### 3j. ALB target health
+
+```bash
+aws elbv2 describe-target-health \
+  --target-group-arn arn:aws:elasticloadbalancing:eu-west-1:827478161993:targetgroup/devops-g5-tg-service-a/c625d63378c6c1d8 \
+  --region eu-west-1 \
+  --query 'TargetHealthDescriptions[*].{ip:Target.Id,port:Target.Port,state:TargetHealth.State}' \
+  --output table
+```
+
+Expected output:
+```
+-------------------------------
+|   DescribeTargetHealth      |
++-------------+-------+-------+
+|     ip      | port  | state |
++-------------+-------+-------+
+|  10.x.x.x   | 3001  | healthy |
+|  10.x.x.x   | 3001  | healthy |
++-------------+-------+-------+
+```
+
+---
+
+## Phase 4 — Trace one request end-to-end
+
+### 4a. Send a traced request and follow logs across all three services
+
+```bash
+REQUEST_ID="trace-$(date +%s)"
+curl -s http://devops-g5-alb-751035582.eu-west-1.elb.amazonaws.com/greet-service-b \
+  -H "X-Request-ID: $REQUEST_ID"
+echo "Tracing: $REQUEST_ID"
+
+sleep 3
+
+echo "=== service-a logs ==="
+aws logs filter-log-events \
+  --log-group-name /ecs/devops-g5-service-a \
+  --filter-pattern "$REQUEST_ID" \
+  --region eu-west-1 \
+  --query 'events[*].message' --output text
+
+echo "=== service-b logs ==="
+aws logs filter-log-events \
+  --log-group-name /ecs/devops-g5-service-b \
+  --filter-pattern "$REQUEST_ID" \
+  --region eu-west-1 \
+  --query 'events[*].message' --output text
+
+echo "=== service-c logs ==="
+aws logs filter-log-events \
+  --log-group-name /ecs/devops-g5-service-c \
+  --filter-pattern "$REQUEST_ID" \
+  --region eu-west-1 \
+  --query 'events[*].message' --output text
+```
+
+Expected — same `request_id` appears in all three log groups showing the full chain: `request_received` in A → `request_forwarded` in B → `callback_sent` in C → `callback_received` in A → `request_completed` in A.
+
+Client
+  │
+  ▼
+service-a
+  │  GET /greet-service-b
+  ▼
+service-b
+  │  GET /greet
+  ▼
+service-c
+  │  GET /greet-c
+  ├──────────────────────────────►
+  │                               service-a
+  │                               POST /greeting-rcvd
+  │◄──────────────────────────────
+  ▼
+service-c completes (12 ms)
+  ▼
+service-b completes (20 ms)
+  ▼
+service-a forwards response
+  ▼
+Client receives HTTP 200 (33 ms)
+
+---
+
+## Phase 4.3 — Kill a task (availability test)
+
+### 4.3a. Start continuous traffic in one terminal
+
+```bash
+while true; do
+  date
+  curl -s -o /dev/null \
+    -w "status=%{http_code} time=%{time_total}\n" \
+    http://devops-g5-alb-751035582.eu-west-1.elb.amazonaws.com/health
+  sleep 1
+done
+```
+
+Expected output (steady state):
+```
+Mon Jul 21 14:00:00 UTC 2026
+status=200 time=0.045
+Mon Jul 21 14:00:01 UTC 2026
+status=200 time=0.043
+```
+
+### 4.3b. Stop one service-a task (second terminal)
+
+```bash
+aws ecs stop-task \
+  --cluster devops-g5-cluster \
+  --task ee9ba1708dba492e9e35c24531a77f74 \
+  --reason "availability-test" \
+  --region eu-west-1 \
+  --query 'task.{lastStatus:lastStatus,stoppedReason:stoppedReason}' \
+  --output json
+```
+
+Expected output:
+```json
+{
+    "lastStatus": "STOPPING",
+    "stoppedReason": "availability-test"
+}
+```
+
+### 4.3c. Watch ECS replace the task
+
+```bash
+watch -n 5 'aws ecs describe-services \
+  --cluster devops-g5-cluster \
+  --services devops-g5-svc-service-a \
+  --region eu-west-1 \
+  --query "services[0].{running:runningCount,pending:pendingCount,desired:desiredCount,events:events[0].message}" \
+  --output json'
+```
+
+Expected output (during replacement):
+```json
+{
+    "running": 1,
+    "pending": 1,
+    "desired": 2,
+    "events": "service devops-g5-svc-service-a has started 1 tasks: task abc123."
+}
+```
+
+Expected output (after recovery):
+```json
+{
+    "running": 2,
+    "pending": 0,
+    "desired": 2,
+    "events": "service devops-g5-svc-service-a has reached a steady state."
+}
+```
+
+### 4.3d. Check target health transitions
+
+```bash
+aws elbv2 describe-target-health \
+  --target-group-arn arn:aws:elasticloadbalancing:eu-west-1:827478161993:targetgroup/devops-g5-tg-service-a/c625d63378c6c1d8 \
+  --region eu-west-1 \
+  --query 'TargetHealthDescriptions[*].{ip:Target.Id,state:TargetHealth.State,reason:TargetHealth.Reason}' \
+  --output table
+```
+
+Expected output (during replacement):
+```
++-------------+---------+---------------------------+
+|     ip      |  state  |          reason           |
++-------------+---------+---------------------------+
+|  10.x.x.x   | healthy |                           |
+|  10.x.x.x   | initial | Elb.RegistrationInProgress|
++-------------+---------+---------------------------+
+```
+
+---
+
+## Phase 5 — Hands-off delivery (Gate 3A)
+
+### 5a. Verify pipeline auto-triggered after merge
+
+```bash
+aws codepipeline list-pipeline-executions \
+  --pipeline-name devops-g5-pipeline-service-a \
+  --region eu-west-1 \
+  --max-results 1 \
+  --query 'pipelineExecutionSummaries[0].{id:pipelineExecutionId,status:status,trigger:trigger.triggerType,commit:sourceRevisions[0].revisionId}' \
+  --output json
+```
+
+Expected output:
+```json
+{
+    "id": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+    "status": "Succeeded",
+    "trigger": "WebHook",
+    "commit": "85a3a32eaef81f40e0b98e81fa995bfd0efdbb2f"
+}
+```
+
+### 5b. Verify all three pipeline stages passed
+
+```bash
+for svc in service-a service-b service-c; do
+  echo "=== devops-g5-pipeline-$svc ==="
+  aws codepipeline get-pipeline-state \
+    --name devops-g5-pipeline-$svc \
+    --region eu-west-1 \
+    --query 'stageStates[*].{Stage:stageName,Status:latestExecution.status}' \
+    --output table
+done
+```
+
+Expected output:
+```
+=== devops-g5-pipeline-service-a ===
+-------------------------
+|   GetPipelineState    |
++---------+-------------+
+|  Stage  |   Status    |
++---------+-------------+
+|  Source |  Succeeded  |
+|  Build  |  Succeeded  |
+|  Deploy |  Succeeded  |
++---------+-------------+
+(same for service-b and service-c)
+```
+
+### 5c. Verify SHA-tagged image in ECR matches deployed commit
+
+```bash
+COMMIT=$(git rev-parse --short HEAD)
+for svc in service-a service-b service-c; do
+  echo "=== devops-g5-$svc ==="
+  aws ecr describe-images \
+    --repository-name devops-g5-$svc \
+    --image-ids imageTag=$COMMIT \
+    --region eu-west-1 \
+    --query 'imageDetails[0].{tag:imageTags[0],pushedAt:imagePushedAt,size:imageSizeInBytes}' \
+    --output json
+done
+```
+
+Expected output:
+```json
+{
+    "tag": "85a3a32",
+    "pushedAt": "2026-07-21T...",
+    "size": 79575522
+}
+```
+
+### 5d. Verify new SHA visible through ALB after deploy
+
+```bash
+curl -s http://devops-g5-alb-751035582.eu-west-1.elb.amazonaws.com/version | python3 -m json.tool
+```
+
+Expected output:
+```json
+{
+    "service": "service-a",
+    "version": "85a3a32",
+    "status": "ok"
+}
+```
+
+---
+
+## Gate 3B — Automatic rollback
+
+### Step 1: Confirm current known-good revision
+
+```bash
+aws ecs describe-services \
+  --cluster devops-g5-cluster \
+  --services devops-g5-svc-service-a \
+  --region eu-west-1 \
+  --query 'services[0].taskDefinition' \
+  --output text
+```
+
+Note the revision number (e.g. `devops-g5-td-service-a:7`) — this is the good revision to restore to.
+
+### Step 2: Deploy a bad revision (wrong health-check path)
+
+```bash
+# Register a broken task definition with wrong health check path
+aws ecs register-task-definition \
+  --family devops-g5-td-service-a \
+  --cli-input-json "$(aws ecs describe-task-definition \
+    --task-definition devops-g5-td-service-a \
+    --region eu-west-1 \
+    --query 'taskDefinition' \
+    --output json | \
+    python3 -c "
+import json,sys
+td=json.load(sys.stdin)
+td['containerDefinitions'][0]['healthCheck']['command']=['CMD-SHELL','exit 1']
+for k in ['taskDefinitionArn','revision','status','requiresAttributes','compatibilities','registeredAt','registeredBy']:
+    td.pop(k,None)
+print(json.dumps(td))")" \
+  --region eu-west-1 \
+  --query 'taskDefinition.{family:family,revision:revision}' \
+  --output json
+```
+
+Expected output:
+```json
+{
+    "family": "devops-g5-td-service-a",
+    "revision": 8
+}
+```
+
+### Step 3: Force deploy the bad revision
+
+```bash
+aws ecs update-service \
+  --cluster devops-g5-cluster \
+  --service devops-g5-svc-service-a \
+  --task-definition devops-g5-td-service-a:8 \
+  --force-new-deployment \
+  --region eu-west-1 \
+  --query 'service.{taskDef:taskDefinition,status:status}' \
+  --output json
+```
+
+### Step 4: Watch circuit breaker activate and rollback
+
+```bash
+watch -n 10 'aws ecs describe-services \
+  --cluster devops-g5-cluster \
+  --services devops-g5-svc-service-a \
+  --region eu-west-1 \
+  --query "services[0].{taskDef:taskDefinition,running:runningCount,deployments:deployments[*].{id:id,status:status,taskDef:taskDefinition,failed:failedTasks,rollout:rolloutState}}" \
+  --output json'
+```
+
+Expected output (circuit breaker firing):
+```json
+{
+    "deployments": [
+        {
+            "status": "IN_PROGRESS",
+            "taskDef": "devops-g5-td-service-a:8",
+            "failed": 3,
+            "rollout": "FAILED"
+        },
+        {
+            "status": "ACTIVE",
+            "taskDef": "devops-g5-td-service-a:7",
+            "rollout": "COMPLETED"
+        }
+    ]
+}
+```
+
+Expected output (after rollback completes):
+```json
+{
+    "taskDef": "arn:aws:ecs:eu-west-1:827478161993:task-definition/devops-g5-td-service-a:7",
+    "running": 2,
+    "deployments": [
+        {
+            "status": "PRIMARY",
+            "taskDef": "devops-g5-td-service-a:7",
+            "rollout": "COMPLETED"
+        }
+    ]
+}
+```
+
+### Step 5: Confirm ALB target health recovered
+
+```bash
+aws elbv2 describe-target-health \
+  --target-group-arn arn:aws:elasticloadbalancing:eu-west-1:827478161993:targetgroup/devops-g5-tg-service-a/c625d63378c6c1d8 \
+  --region eu-west-1 \
+  --query 'TargetHealthDescriptions[*].{ip:Target.Id,state:TargetHealth.State}' \
+  --output table
+```
+
+Expected output:
+```
++-------------+---------+
+|     ip      |  state  |
++-------------+---------+
+|  10.x.x.x   | healthy |
+|  10.x.x.x   | healthy |
++-------------+---------+
+```
+
+### Step 6: Confirm application responds through ALB
+
+```bash
+curl -s http://devops-g5-alb-751035582.eu-west-1.elb.amazonaws.com/health | python3 -m json.tool
+```
+
+Expected output:
+```json
+{
+    "service": "service-a",
+    "status": "ok",
+    "dependencies": {
+        "service-b": "ok",
+        "service-c": "ok"
+    }
+}
+```
+
+---
+
+
+### Confirm no billable resources remain
+
+```bash
+echo "=== ECS clusters ==="
+aws ecs list-clusters --region eu-west-1 --query 'clusterArns' --output text
+
+echo "=== ALBs ==="
+aws elbv2 describe-load-balancers --region eu-west-1 \
+  --query 'LoadBalancers[?contains(LoadBalancerName,`devops-g5`)].LoadBalancerName' --output text
+
+echo "=== Fargate tasks ==="
+aws ecs list-tasks --cluster devops-g5-cluster --region eu-west-1 2>/dev/null || echo "Cluster gone"
+```
+
+Expected output after cleanup:
+```
+=== ECS clusters ===
+(empty)
+=== ALBs ===
+(empty)
+=== Fargate tasks ===
+Cluster gone
+```
+
+> Never delete: Default VPC, default subnets, default route table, default Internet Gateway.
+
+---
+
+## Phase 4.2 — Sabotage Round
+
+Each sabotage uses `update-service` to deploy a new task definition revision. No services are deleted. Recovery is always `update-service` back to the last known-good revision.
+
+Known-good revisions:
+- `devops-g5-td-service-a:7`
+- `devops-g5-td-service-b:8`
+- `devops-g5-td-service-c:7`
+
+---
+
+### Sabotage 1 — Wrong health-check path
+
+**Inject (service-a owner runs this secretly):**
+
+```bash
+BROKEN=$(aws ecs describe-task-definition \
+  --task-definition devops-g5-td-service-a \
+  --region eu-west-1 \
+  --query 'taskDefinition' --output json | \
+  python3 -c "
+import json,sys
+td=json.load(sys.stdin)
+td['containerDefinitions'][0]['healthCheck']['command']=['CMD-SHELL','curl -sf http://127.0.0.1:3001/nonexistent || exit 1']
+for k in ['taskDefinitionArn','revision','status','requiresAttributes','compatibilities','registeredAt','registeredBy']:
+    td.pop(k,None)
+print(json.dumps(td))")
+
+NEW_REV=$(aws ecs register-task-definition --region eu-west-1 \
+  --cli-input-json "$BROKEN" \
+  --query 'taskDefinition.revision' --output text)
+
+aws ecs update-service \
+  --cluster devops-g5-cluster \
+  --service devops-g5-svc-service-a \
+  --task-definition devops-g5-td-service-a:$NEW_REV \
+  --force-new-deployment \
+  --region eu-west-1 --output json | python3 -c "import json,sys; s=json.load(sys.stdin)['service']; print('Deployed revision:', s['taskDefinition'])"
+```
+
+**Investigate (team runs these):**
+
+```bash
+# 1. ALB target health — shows unhealthy
+aws elbv2 describe-target-health \
+  --target-group-arn arn:aws:elasticloadbalancing:eu-west-1:827478161993:targetgroup/devops-g5-tg-service-a/c625d63378c6c1d8 \
+  --region eu-west-1 \
+  --query 'TargetHealthDescriptions[*].{ip:Target.Id,state:TargetHealth.State,reason:TargetHealth.Reason,desc:TargetHealth.Description}' \
+  --output table
+```
+
+Expected:
+```
+| state     | reason                    | desc                 |
+| unhealthy | Target.FailedHealthChecks | Health checks failed |
+```
+
+```bash
+# 2. ECS service events
+aws ecs describe-services \
+  --cluster devops-g5-cluster \
+  --services devops-g5-svc-service-a \
+  --region eu-west-1 \
+  --query 'services[0].events[:5].message' \
+  --output table
+```
+
+Expected:
+```
+service has stopped 1 running tasks: task xxx is unhealthy
+```
+
+```bash
+# 3. Stopped task reason
+aws ecs list-tasks --cluster devops-g5-cluster \
+  --service-name devops-g5-svc-service-a \
+  --desired-status STOPPED \
+  --region eu-west-1 --query 'taskArns[0]' --output text | \
+  xargs -I{} aws ecs describe-tasks --cluster devops-g5-cluster \
+  --tasks {} --region eu-west-1 \
+  --query 'tasks[0].{stopped:stoppedReason,health:healthStatus,container:containers[0].reason}' \
+  --output json
+```
+
+Expected:
+```json
+{
+    "stopped": "Task failed ECS deployment circuit breaker checks",
+    "health": "UNHEALTHY",
+    "container": "Health check failed"
+}
+```
+
+```bash
+# 4. Find the bad health check in the task definition
+aws ecs describe-task-definition \
+  --task-definition devops-g5-td-service-a \
+  --region eu-west-1 \
+  --query 'taskDefinition.{revision:revision,healthCheck:containerDefinitions[0].healthCheck}' \
+  --output json
+```
+
+Expected:
+```json
+{
+    "revision": 9,
+    "healthCheck": {
+        "command": ["CMD-SHELL", "curl -sf http://127.0.0.1:3001/nonexistent || exit 1"]
+    }
+}
+```
+
+**Recover:**
+
+```bash
+aws ecs update-service \
+  --cluster devops-g5-cluster \
+  --service devops-g5-svc-service-a \
+  --task-definition devops-g5-td-service-a:7 \
+  --force-new-deployment \
+  --region eu-west-1 \
+  --query 'service.{taskDef:taskDefinition,status:status}' --output json
+```
+
+---
+
+### Sabotage 2 — Wrong container port
+
+**Inject:**
+
+```bash
+BROKEN=$(aws ecs describe-task-definition \
+  --task-definition devops-g5-td-service-b \
+  --region eu-west-1 \
+  --query 'taskDefinition' --output json | \
+  python3 -c "
+import json,sys
+td=json.load(sys.stdin)
+td['containerDefinitions'][0]['portMappings'][0]['containerPort']=9999
+td['containerDefinitions'][0]['portMappings'][0]['hostPort']=9999
+td['containerDefinitions'][0]['healthCheck']['command']=['CMD-SHELL','curl -sf http://127.0.0.1:9999/health || exit 1']
+for k in ['taskDefinitionArn','revision','status','requiresAttributes','compatibilities','registeredAt','registeredBy']:
+    td.pop(k,None)
+print(json.dumps(td))")
+
+NEW_REV=$(aws ecs register-task-definition --region eu-west-1 \
+  --cli-input-json "$BROKEN" \
+  --query 'taskDefinition.revision' --output text)
+
+aws ecs update-service \
+  --cluster devops-g5-cluster \
+  --service devops-g5-svc-service-b \
+  --task-definition devops-g5-td-service-b:$NEW_REV \
+  --force-new-deployment \
+  --region eu-west-1 --output json | python3 -c "import json,sys; s=json.load(sys.stdin)['service']; print('Deployed revision:', s['taskDefinition'])"
+```
+
+**Investigate:**
+
+```bash
+# 1. Full chain request fails
+curl -s http://devops-g5-alb-751035582.eu-west-1.elb.amazonaws.com/greet-service-b \
+  -H "X-Request-ID: sabotage-port-001" | python3 -m json.tool
+```
+
+Expected:
+```json
+{"request_id": "sabotage-port-001", "status": "error", "message": "fetch failed"}
+```
+
+```bash
+# 2. service-a logs show fetch failed to service-b
+aws logs filter-log-events \
+  --log-group-name /ecs/devops-g5-service-a \
+  --filter-pattern "sabotage-port-001" \
+  --region eu-west-1 \
+  --query 'events[*].message' --output text
+```
+
+```bash
+# 3. service-b task is UNHEALTHY
+aws ecs describe-tasks \
+  --cluster devops-g5-cluster \
+  --tasks $(aws ecs list-tasks --cluster devops-g5-cluster \
+    --service-name devops-g5-svc-service-b \
+    --region eu-west-1 --query 'taskArns[0]' --output text) \
+  --region eu-west-1 \
+  --query 'tasks[0].{health:healthStatus,port:containers[0].networkBindings}' \
+  --output json
+```
+
+```bash
+# 4. Reveal the wrong port in task definition
+aws ecs describe-task-definition \
+  --task-definition devops-g5-td-service-b \
+  --region eu-west-1 \
+  --query 'taskDefinition.{revision:revision,port:containerDefinitions[0].portMappings[0].containerPort}' \
+  --output json
+```
+
+Expected:
+```json
+{"revision": 9, "port": 9999}
+```
+
+**Recover:**
+
+```bash
+aws ecs update-service \
+  --cluster devops-g5-cluster \
+  --service devops-g5-svc-service-b \
+  --task-definition devops-g5-td-service-b:8 \
+  --force-new-deployment \
+  --region eu-west-1 \
+  --query 'service.{taskDef:taskDefinition,status:status}' --output json
+```
+
+---
+
+### Sabotage 3 — Blocking security-group rule
+
+**Inject (service-c owner runs this secretly):**
+
+```bash
+aws ec2 revoke-security-group-ingress \
+  --group-id sg-0a48cc8721a9f782a \
+  --protocol tcp \
+  --port 3003 \
+  --source-group sg-08c4cf59960d46bde \
+  --region eu-west-1 && echo "Rule removed — service-c now unreachable from service-b"
+```
+
+**Investigate:**
+
+```bash
+# 1. Full chain fails
+curl -s http://devops-g5-alb-751035582.eu-west-1.elb.amazonaws.com/greet-service-b \
+  -H "X-Request-ID: sabotage-sg-001" | python3 -m json.tool
+```
+
+Expected:
+```json
+{"request_id": "sabotage-sg-001", "status": "error", "message": "fetch failed"}
+```
+
+```bash
+# 2. B->C fails from inside service-b task
+TASK_B=$(aws ecs list-tasks --cluster devops-g5-cluster \
+  --service-name devops-g5-svc-service-b \
+  --region eu-west-1 --query 'taskArns[0]' --output text | cut -d'/' -f3)
+
+aws ecs execute-command \
+  --cluster devops-g5-cluster \
+  --task $TASK_B \
+  --container service-b \
+  --interactive \
+  --command "sh -c 'curl -sv --max-time 5 http://service-c:3003/health 2>&1'" \
+  --region eu-west-1
+```
+
+Expected:
+```
+* Operation timed out after 5000 milliseconds with 0 bytes received
+```
+
+```bash
+# 3. Reveal the missing rule — service-c SG has no ingress
+aws ec2 describe-security-groups \
+  --group-ids sg-0a48cc8721a9f782a \
+  --region eu-west-1 \
+  --query 'SecurityGroups[0].IpPermissions' \
+  --output json
+```
+
+Expected:
+```json
+[]
+```
+
+**Recover:**
+
+```bash
+aws ec2 authorize-security-group-ingress \
+  --group-id sg-0a48cc8721a9f782a \
+  --protocol tcp \
+  --port 3003 \
+  --source-group sg-08c4cf59960d46bde \
+  --region eu-west-1 && echo "Rule restored"
+```
+
+---
