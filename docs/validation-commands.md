@@ -761,3 +761,399 @@ Cluster gone
 ```
 
 > Never delete: Default VPC, default subnets, default route table, default Internet Gateway.
+
+---
+
+## Phase 4.2 — Sabotage Round
+
+Each sabotage uses `update-service` to deploy a new task definition revision. No services are deleted. Recovery is always `update-service` back to the last known-good revision.
+
+Known-good revisions:
+- `devops-g5-td-service-a:7`
+- `devops-g5-td-service-b:8`
+- `devops-g5-td-service-c:7`
+
+---
+
+### Sabotage 1 — Wrong health-check path
+
+**Inject (service-a owner runs this secretly):**
+
+```bash
+BROKEN=$(aws ecs describe-task-definition \
+  --task-definition devops-g5-td-service-a \
+  --region eu-west-1 \
+  --query 'taskDefinition' --output json | \
+  python3 -c "
+import json,sys
+td=json.load(sys.stdin)
+td['containerDefinitions'][0]['healthCheck']['command']=['CMD-SHELL','curl -sf http://127.0.0.1:3001/nonexistent || exit 1']
+for k in ['taskDefinitionArn','revision','status','requiresAttributes','compatibilities','registeredAt','registeredBy']:
+    td.pop(k,None)
+print(json.dumps(td))")
+
+NEW_REV=$(aws ecs register-task-definition --region eu-west-1 \
+  --cli-input-json "$BROKEN" \
+  --query 'taskDefinition.revision' --output text)
+
+aws ecs update-service \
+  --cluster devops-g5-cluster \
+  --service devops-g5-svc-service-a \
+  --task-definition devops-g5-td-service-a:$NEW_REV \
+  --force-new-deployment \
+  --region eu-west-1 --output json | python3 -c "import json,sys; s=json.load(sys.stdin)['service']; print('Deployed revision:', s['taskDefinition'])"
+```
+
+**Investigate (team runs these):**
+
+```bash
+# 1. ALB target health — shows unhealthy
+aws elbv2 describe-target-health \
+  --target-group-arn arn:aws:elasticloadbalancing:eu-west-1:827478161993:targetgroup/devops-g5-tg-service-a/c625d63378c6c1d8 \
+  --region eu-west-1 \
+  --query 'TargetHealthDescriptions[*].{ip:Target.Id,state:TargetHealth.State,reason:TargetHealth.Reason,desc:TargetHealth.Description}' \
+  --output table
+```
+
+Expected:
+```
+| state     | reason                    | desc                 |
+| unhealthy | Target.FailedHealthChecks | Health checks failed |
+```
+
+```bash
+# 2. ECS service events
+aws ecs describe-services \
+  --cluster devops-g5-cluster \
+  --services devops-g5-svc-service-a \
+  --region eu-west-1 \
+  --query 'services[0].events[:5].message' \
+  --output table
+```
+
+Expected:
+```
+service has stopped 1 running tasks: task xxx is unhealthy
+```
+
+```bash
+# 3. Stopped task reason
+aws ecs list-tasks --cluster devops-g5-cluster \
+  --service-name devops-g5-svc-service-a \
+  --desired-status STOPPED \
+  --region eu-west-1 --query 'taskArns[0]' --output text | \
+  xargs -I{} aws ecs describe-tasks --cluster devops-g5-cluster \
+  --tasks {} --region eu-west-1 \
+  --query 'tasks[0].{stopped:stoppedReason,health:healthStatus,container:containers[0].reason}' \
+  --output json
+```
+
+Expected:
+```json
+{
+    "stopped": "Task failed ECS deployment circuit breaker checks",
+    "health": "UNHEALTHY",
+    "container": "Health check failed"
+}
+```
+
+```bash
+# 4. Find the bad health check in the task definition
+aws ecs describe-task-definition \
+  --task-definition devops-g5-td-service-a \
+  --region eu-west-1 \
+  --query 'taskDefinition.{revision:revision,healthCheck:containerDefinitions[0].healthCheck}' \
+  --output json
+```
+
+Expected:
+```json
+{
+    "revision": 9,
+    "healthCheck": {
+        "command": ["CMD-SHELL", "curl -sf http://127.0.0.1:3001/nonexistent || exit 1"]
+    }
+}
+```
+
+**Recover:**
+
+```bash
+aws ecs update-service \
+  --cluster devops-g5-cluster \
+  --service devops-g5-svc-service-a \
+  --task-definition devops-g5-td-service-a:7 \
+  --force-new-deployment \
+  --region eu-west-1 \
+  --query 'service.{taskDef:taskDefinition,status:status}' --output json
+```
+
+---
+
+### Sabotage 2 — Wrong container port
+
+**Inject:**
+
+```bash
+BROKEN=$(aws ecs describe-task-definition \
+  --task-definition devops-g5-td-service-b \
+  --region eu-west-1 \
+  --query 'taskDefinition' --output json | \
+  python3 -c "
+import json,sys
+td=json.load(sys.stdin)
+td['containerDefinitions'][0]['portMappings'][0]['containerPort']=9999
+td['containerDefinitions'][0]['portMappings'][0]['hostPort']=9999
+td['containerDefinitions'][0]['healthCheck']['command']=['CMD-SHELL','curl -sf http://127.0.0.1:9999/health || exit 1']
+for k in ['taskDefinitionArn','revision','status','requiresAttributes','compatibilities','registeredAt','registeredBy']:
+    td.pop(k,None)
+print(json.dumps(td))")
+
+NEW_REV=$(aws ecs register-task-definition --region eu-west-1 \
+  --cli-input-json "$BROKEN" \
+  --query 'taskDefinition.revision' --output text)
+
+aws ecs update-service \
+  --cluster devops-g5-cluster \
+  --service devops-g5-svc-service-b \
+  --task-definition devops-g5-td-service-b:$NEW_REV \
+  --force-new-deployment \
+  --region eu-west-1 --output json | python3 -c "import json,sys; s=json.load(sys.stdin)['service']; print('Deployed revision:', s['taskDefinition'])"
+```
+
+**Investigate:**
+
+```bash
+# 1. Full chain request fails
+curl -s http://devops-g5-alb-751035582.eu-west-1.elb.amazonaws.com/greet-service-b \
+  -H "X-Request-ID: sabotage-port-001" | python3 -m json.tool
+```
+
+Expected:
+```json
+{"request_id": "sabotage-port-001", "status": "error", "message": "fetch failed"}
+```
+
+```bash
+# 2. service-a logs show fetch failed to service-b
+aws logs filter-log-events \
+  --log-group-name /ecs/devops-g5-service-a \
+  --filter-pattern "sabotage-port-001" \
+  --region eu-west-1 \
+  --query 'events[*].message' --output text
+```
+
+```bash
+# 3. service-b task is UNHEALTHY
+aws ecs describe-tasks \
+  --cluster devops-g5-cluster \
+  --tasks $(aws ecs list-tasks --cluster devops-g5-cluster \
+    --service-name devops-g5-svc-service-b \
+    --region eu-west-1 --query 'taskArns[0]' --output text) \
+  --region eu-west-1 \
+  --query 'tasks[0].{health:healthStatus,port:containers[0].networkBindings}' \
+  --output json
+```
+
+```bash
+# 4. Reveal the wrong port in task definition
+aws ecs describe-task-definition \
+  --task-definition devops-g5-td-service-b \
+  --region eu-west-1 \
+  --query 'taskDefinition.{revision:revision,port:containerDefinitions[0].portMappings[0].containerPort}' \
+  --output json
+```
+
+Expected:
+```json
+{"revision": 9, "port": 9999}
+```
+
+**Recover:**
+
+```bash
+aws ecs update-service \
+  --cluster devops-g5-cluster \
+  --service devops-g5-svc-service-b \
+  --task-definition devops-g5-td-service-b:8 \
+  --force-new-deployment \
+  --region eu-west-1 \
+  --query 'service.{taskDef:taskDefinition,status:status}' --output json
+```
+
+---
+
+### Sabotage 3 — Blocking security-group rule
+
+**Inject (service-c owner runs this secretly):**
+
+```bash
+aws ec2 revoke-security-group-ingress \
+  --group-id sg-0a48cc8721a9f782a \
+  --protocol tcp \
+  --port 3003 \
+  --source-group sg-08c4cf59960d46bde \
+  --region eu-west-1 && echo "Rule removed — service-c now unreachable from service-b"
+```
+
+**Investigate:**
+
+```bash
+# 1. Full chain fails
+curl -s http://devops-g5-alb-751035582.eu-west-1.elb.amazonaws.com/greet-service-b \
+  -H "X-Request-ID: sabotage-sg-001" | python3 -m json.tool
+```
+
+Expected:
+```json
+{"request_id": "sabotage-sg-001", "status": "error", "message": "fetch failed"}
+```
+
+```bash
+# 2. B->C fails from inside service-b task
+TASK_B=$(aws ecs list-tasks --cluster devops-g5-cluster \
+  --service-name devops-g5-svc-service-b \
+  --region eu-west-1 --query 'taskArns[0]' --output text | cut -d'/' -f3)
+
+aws ecs execute-command \
+  --cluster devops-g5-cluster \
+  --task $TASK_B \
+  --container service-b \
+  --interactive \
+  --command "sh -c 'curl -sv --max-time 5 http://service-c:3003/health 2>&1'" \
+  --region eu-west-1
+```
+
+Expected:
+```
+* Operation timed out after 5000 milliseconds with 0 bytes received
+```
+
+```bash
+# 3. Reveal the missing rule — service-c SG has no ingress
+aws ec2 describe-security-groups \
+  --group-ids sg-0a48cc8721a9f782a \
+  --region eu-west-1 \
+  --query 'SecurityGroups[0].IpPermissions' \
+  --output json
+```
+
+Expected:
+```json
+[]
+```
+
+**Recover:**
+
+```bash
+aws ec2 authorize-security-group-ingress \
+  --group-id sg-0a48cc8721a9f782a \
+  --protocol tcp \
+  --port 3003 \
+  --source-group sg-08c4cf59960d46bde \
+  --region eu-west-1 && echo "Rule restored"
+```
+
+---
+
+### Sabotage 4 — Nonexistent image tag
+
+**Inject:**
+
+```bash
+BROKEN=$(aws ecs describe-task-definition \
+  --task-definition devops-g5-td-service-c \
+  --region eu-west-1 \
+  --query 'taskDefinition' --output json | \
+  python3 -c "
+import json,sys
+td=json.load(sys.stdin)
+td['containerDefinitions'][0]['image']='827478161993.dkr.ecr.eu-west-1.amazonaws.com/devops-g5-service-c:does-not-exist'
+for k in ['taskDefinitionArn','revision','status','requiresAttributes','compatibilities','registeredAt','registeredBy']:
+    td.pop(k,None)
+print(json.dumps(td))")
+
+NEW_REV=$(aws ecs register-task-definition --region eu-west-1 \
+  --cli-input-json "$BROKEN" \
+  --query 'taskDefinition.revision' --output text)
+
+aws ecs update-service \
+  --cluster devops-g5-cluster \
+  --service devops-g5-svc-service-c \
+  --task-definition devops-g5-td-service-c:$NEW_REV \
+  --force-new-deployment \
+  --region eu-west-1 --output json | python3 -c "import json,sys; s=json.load(sys.stdin)['service']; print('Deployed revision:', s['taskDefinition'])"
+```
+
+**Investigate:**
+
+```bash
+# 1. ECS service events show image pull failure
+aws ecs describe-services \
+  --cluster devops-g5-cluster \
+  --services devops-g5-svc-service-c \
+  --region eu-west-1 \
+  --query 'services[0].events[:3].message' \
+  --output table
+```
+
+```bash
+# 2. Stopped task reason
+aws ecs list-tasks --cluster devops-g5-cluster \
+  --service-name devops-g5-svc-service-c \
+  --desired-status STOPPED \
+  --region eu-west-1 --query 'taskArns[0]' --output text | \
+  xargs -I{} aws ecs describe-tasks --cluster devops-g5-cluster \
+  --tasks {} --region eu-west-1 \
+  --query 'tasks[0].{stopped:stoppedReason,container:containers[0].reason}' \
+  --output json
+```
+
+Expected:
+```json
+{
+    "stopped": "CannotPullContainerError",
+    "container": "CannotPullContainerError: pull image manifest has been retried 5 time(s): failed to resolve ref ... : unexpected status code 404"
+}
+```
+
+```bash
+# 3. Reveal the bad image tag
+aws ecs describe-task-definition \
+  --task-definition devops-g5-td-service-c \
+  --region eu-west-1 \
+  --query 'taskDefinition.{revision:revision,image:containerDefinitions[0].image}' \
+  --output json
+```
+
+Expected:
+```json
+{"revision": 8, "image": "...devops-g5-service-c:does-not-exist"}
+```
+
+**Recover:**
+
+```bash
+aws ecs update-service \
+  --cluster devops-g5-cluster \
+  --service devops-g5-svc-service-c \
+  --task-definition devops-g5-td-service-c:7 \
+  --force-new-deployment \
+  --region eu-west-1 \
+  --query 'service.{taskDef:taskDefinition,status:status}' --output json
+```
+
+---
+
+### Watch any sabotage in real time
+
+Run this in a separate terminal during any sabotage:
+
+```bash
+watch -n 5 'aws ecs describe-services \
+  --cluster devops-g5-cluster \
+  --services devops-g5-svc-service-a devops-g5-svc-service-b devops-g5-svc-service-c \
+  --region eu-west-1 \
+  --query "services[*].{name:serviceName,running:runningCount,desired:desiredCount,taskDef:taskDefinition,event:events[0].message}" \
+  --output table'
+```
