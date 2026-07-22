@@ -344,6 +344,30 @@ aws logs filter-log-events \
 
 Expected — same `request_id` appears in all three log groups showing the full chain: `request_received` in A → `request_forwarded` in B → `callback_sent` in C → `callback_received` in A → `request_completed` in A.
 
+Client
+  │
+  ▼
+service-a
+  │  GET /greet-service-b
+  ▼
+service-b
+  │  GET /greet
+  ▼
+service-c
+  │  GET /greet-c
+  ├──────────────────────────────►
+  │                               service-a
+  │                               POST /greeting-rcvd
+  │◄──────────────────────────────
+  ▼
+service-c completes (12 ms)
+  ▼
+service-b completes (20 ms)
+  ▼
+service-a forwards response
+  ▼
+Client receives HTTP 200 (33 ms)
+
 ---
 
 ## Phase 4.3 — Kill a task (availability test)
