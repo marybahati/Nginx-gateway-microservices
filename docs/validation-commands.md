@@ -224,20 +224,39 @@ OK: blocked
 
 ### 3h. Negative test — A → C (inside service-a task, must be DENIED)
 
+With Service Connect, `service-c` resolves to a local Envoy sidecar proxy (`127.255.0.x`) — not the task IP directly. `nc` will show the proxy port as open. Use `curl -sv` to get the full picture: DNS resolution, connection attempt, and the HTTP response from the proxy:
+
 ```bash
 aws ecs execute-command \
   --cluster devops-g5-cluster \
   --task ee9ba1708dba492e9e35c24531a77f74 \
   --container service-a \
   --interactive \
-  --command "curl -i --max-time 5 http://service-c:3003/health" \
+  --command "sh -c 'echo === DNS ===; nslookup service-c; echo; echo === HTTP A->C ===; curl -sv --max-time 5 http://service-c:3003/health 2>&1; echo; echo exit=$?'" \
   --region eu-west-1
 ```
 
 Expected output:
 ```
-curl: (28) Connection timed out after 5 seconds
+=== DNS ===
+Name:      service-c
+Address 1: 127.255.0.3    <-- Service Connect local proxy, not task IP
+
+=== HTTP A->C ===
+* Trying 127.255.0.3:3003...
+* Connected to service-c (127.255.0.3) port 3003
+> GET /health HTTP/1.1
+> Host: service-c:3003
+...
+< HTTP/1.1 504 Gateway Timeout
+{"message":"upstream connect error or disconnect/reset before headers"}
+
+exit=0
 ```
+
+The `504 Gateway Timeout` from the Service Connect proxy is the proof that A→C is blocked — the local proxy accepted the connection but could not reach the actual service-c task because `devops-g5-service-c-sg` only allows ingress from `devops-g5-service-b-sg`, not from `devops-g5-service-a-sg`.
+
+If this returns `200` instead of `504`, the service-c security group has an incorrect ingress rule allowing service-a.
 
 ### 3i. Security group rules proof
 
