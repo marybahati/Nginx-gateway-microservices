@@ -26,4 +26,6 @@ EXPOSE 3001
 
 USER node
 
-CMD ["sh", "-c", "node /app/scripts/wait-for-deps.mjs && node index.js"]
+# On ECS/Fargate, Service Connect handles peer discovery at runtime.
+# wait-for-deps is only needed for local Docker Compose ordering.
+CMD ["node", "index.js"]
