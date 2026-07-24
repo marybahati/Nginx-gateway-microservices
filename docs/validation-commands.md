@@ -1021,3 +1021,185 @@ aws ec2 authorize-security-group-ingress \
 ```
 
 ---
+
+### Sabotage 4 — Wrong downstream endpoint
+
+This checks diagnosis of a running, healthy task whose runtime dependency configuration is wrong.
+
+**Inject:**
+
+```bash
+BROKEN=$(aws ecs describe-task-definition --task-definition devops-g5-td-service-b \
+  --region eu-west-1 --query taskDefinition --output json | python3 -c "
+import json,sys
+td=json.load(sys.stdin)
+for item in td['containerDefinitions'][0]['environment']:
+    if item['name'] == 'SERVICE_C_URL': item['value'] = 'http://service-c:3999'
+for k in ['taskDefinitionArn','revision','status','requiresAttributes','compatibilities','registeredAt','registeredBy']: td.pop(k,None)
+print(json.dumps(td))")
+NEW_REV=$(aws ecs register-task-definition --region eu-west-1 --cli-input-json "$BROKEN" --query taskDefinition.revision --output text)
+aws ecs update-service --cluster devops-g5-cluster --service devops-g5-svc-service-b \
+  --task-definition devops-g5-td-service-b:$NEW_REV --force-new-deployment --region eu-west-1
+```
+
+**Investigate:**
+
+```bash
+REQUEST_ID="sabotage-endpoint-$(date +%s)"
+curl -s http://devops-g5-alb-751035582.eu-west-1.elb.amazonaws.com/greet-service-b \
+  -H "X-Request-ID: $REQUEST_ID" | python3 -m json.tool
+aws logs filter-log-events --log-group-name /ecs/devops-g5-service-b \
+  --filter-pattern "$REQUEST_ID" --region eu-west-1 --query 'events[*].message' --output text
+aws ecs describe-task-definition --task-definition devops-g5-td-service-b:$NEW_REV \
+  --region eu-west-1 --query 'taskDefinition.containerDefinitions[0].environment[?name==`SERVICE_C_URL`]' --output json
+```
+
+Expected: the client reports `fetch failed`, service-b logs show the downstream failure, and the task definition shows `http://service-c:3999`.
+
+**Recover:**
+
+```bash
+aws ecs update-service --cluster devops-g5-cluster --service devops-g5-svc-service-b \
+  --task-definition devops-g5-td-service-b:8 --force-new-deployment --region eu-west-1
+```
+
+---
+
+### Sabotage 5 — Remove public ingress from the ALB
+
+This proves that the public entry point and its security group can be diagnosed without changing an application task.
+
+**Inject:**
+
+```bash
+aws ec2 revoke-security-group-ingress --group-id sg-0e0a3697d6f2bdd6a \
+  --protocol tcp --port 80 --cidr 0.0.0.0/0 --region eu-west-1
+```
+
+**Investigate:**
+
+```bash
+curl --connect-timeout 5 -i http://devops-g5-alb-751035582.eu-west-1.elb.amazonaws.com/health \
+  && echo "FAIL: ALB is still publicly reachable" || echo "OK: public ingress is blocked"
+aws ec2 describe-security-groups --group-ids sg-0e0a3697d6f2bdd6a --region eu-west-1 \
+  --query 'SecurityGroups[0].IpPermissions' --output json
+aws elbv2 describe-target-health \
+  --target-group-arn arn:aws:elasticloadbalancing:eu-west-1:827478161993:targetgroup/devops-g5-tg-service-a/c625d63378c6c1d8 \
+  --region eu-west-1 --query 'TargetHealthDescriptions[*].TargetHealth.State' --output text
+```
+
+Expected: the public request times out, port-80 ingress is absent, and target health stays `healthy`; the fault is at the ALB boundary.
+
+**Recover:**
+
+```bash
+aws ec2 authorize-security-group-ingress --group-id sg-0e0a3697d6f2bdd6a \
+  --protocol tcp --port 80 --cidr 0.0.0.0/0 --region eu-west-1
+```
+
+---
+
+## Scar log — record and close every validation failure
+
+Create one scar-log entry for each sabotage and for every unexpected failure. Record the evidence before recovery and the verification result after recovery. Keep the log with the handoff materials. A completed log without evidence is not sufficient.
+
+| ID | Date / owner | Symptom | First hypothesis | Evidence | Actual cause | Repair | Prevention | Verified closed |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| SCAR-001 |  |  |  |  |  |  |  |  |
+
+Use this evidence bundle for a scar-log entry (set `REQUEST_ID` to the recorded request ID):
+
+```bash
+REQUEST_ID="replace-with-request-id"
+for svc in service-a service-b service-c; do
+  echo "=== $svc ==="
+  aws logs filter-log-events --log-group-name /ecs/devops-g5-$svc \
+    --filter-pattern "$REQUEST_ID" --region eu-west-1 \
+    --query 'events[*].{time:timestamp,message:message}' --output json
+done
+aws ecs describe-services --cluster devops-g5-cluster \
+  --services devops-g5-svc-service-a devops-g5-svc-service-b devops-g5-svc-service-c \
+  --region eu-west-1 \
+  --query 'services[*].{service:serviceName,taskDef:taskDefinition,running:runningCount,events:events[:3].message}' --output json
+```
+
+Before closing an entry, restore the known-good configuration, wait for a steady state, and re-run the relevant positive test from Phase 3 or Phase 4.
+
+---
+
+## Phase 6 — Handoff and cleanup
+
+Perform this only after Gate 3 evidence is accepted and the team has agreed the AWS environment may be removed. Archive evidence first: scar log, deployment SHA, task-definition revisions, ALB URL, rollback procedure, and service ownership.
+
+### 6.1 Cost sweep
+
+The ALB and running Fargate tasks are the most expensive resources likely to be forgotten in this lab. Review all project resources before removal and record the owner and disposal decision.
+
+```bash
+aws ecs list-tasks --cluster devops-g5-cluster --region eu-west-1 --output table
+aws elbv2 describe-load-balancers --region eu-west-1 \
+  --query 'LoadBalancers[?contains(LoadBalancerName,`devops-g5`)].{name:LoadBalancerName,state:State}' --output table
+aws ecr describe-repositories --region eu-west-1 \
+  --query 'repositories[?contains(repositoryName,`devops-g5`)].repositoryName' --output table
+aws logs describe-log-groups --log-group-name-prefix /ecs/devops-g5- --region eu-west-1 \
+  --query 'logGroups[*].{name:logGroupName,storedBytes:storedBytes}' --output table
+```
+
+### 6.2 Capture the handoff state and infrastructure manifest
+
+```bash
+aws ecs describe-services --cluster devops-g5-cluster \
+  --services devops-g5-svc-service-a devops-g5-svc-service-b devops-g5-svc-service-c \
+  --region eu-west-1 \
+  --query 'services[*].{service:serviceName,taskDef:taskDefinition,running:runningCount,desired:desiredCount,rollout:deployments[?status==`PRIMARY`].rolloutState|[0]}' --output table
+for svc in service-a service-b service-c; do
+  aws codepipeline list-pipeline-executions --pipeline-name devops-g5-pipeline-$svc \
+    --region eu-west-1 --max-results 1 \
+    --query 'pipelineExecutionSummaries[0].{status:status,commit:sourceRevisions[0].revisionId}' --output json
+done
+```
+
+| Resource | Owner | Important settings | Future IaC change |
+| --- | --- | --- | --- |
+| ECS cluster | Platform | Fargate; Service Connect namespace | VPC and cluster module |
+| Service A | Service A owner | Desired count 2; ALB target | Autoscaling |
+| Service B | Service B owner | Internal-only Service Connect | Task-definition module |
+| Service C | Service C owner | Internal-only Service Connect | Task-definition module |
+| ALB and target group | Platform | Internet-facing HTTP :80; target type `ip` | HTTPS, ACM, WAF |
+| Security groups | Respective owners | SG-to-SG ingress only | Custom VPC/private subnets |
+
+The final handoff also identifies future production work: private subnets with NAT or VPC endpoints, HTTPS/ACM, WAF, Secrets Manager, autoscaling, infrastructure as code, and separated accounts/environments.
+
+### 6.3 Delete the temporary ECS environment
+
+Run only after explicit approval to tear down. Delete in this order: pipelines, ECS services, ALB, target group, ECS cluster, project security groups, CloudWatch log groups, then ECR repositories only when instructed. This intentionally excludes default VPC resources.
+
+```bash
+for svc in service-a service-b service-c; do
+  aws codepipeline delete-pipeline --name devops-g5-pipeline-$svc --region eu-west-1
+done
+```
+
+```bash
+for svc in service-a service-b service-c; do
+  aws ecs update-service --cluster devops-g5-cluster --service devops-g5-svc-$svc --desired-count 0 --region eu-west-1
+  aws ecs wait services-stable --cluster devops-g5-cluster --services devops-g5-svc-$svc --region eu-west-1
+  aws ecs delete-service --cluster devops-g5-cluster --service devops-g5-svc-$svc --force --region eu-west-1
+done
+aws ecs delete-cluster --cluster devops-g5-cluster --region eu-west-1
+```
+
+Delete the ALB, target group, and project security groups through their owning IaC stack when one exists. For manually created resources, delete in this order: ALB, target group, then the four `devops-g5-*` security groups. Finally, delete `/ecs/devops-g5-*` CloudWatch log groups and project ECR repositories only when retention is not required. Never delete default VPC resources, shared Route 53 zones, or another group's resources.
+
+### 6.4 Validate teardown
+
+```bash
+aws ecs describe-clusters --clusters devops-g5-cluster --region eu-west-1 \
+  --query 'clusters[*].{cluster:clusterName,status:status}' --output table
+aws elbv2 describe-load-balancers --region eu-west-1 \
+  --query 'LoadBalancers[?LoadBalancerName==`devops-g5-alb`].LoadBalancerName' --output text
+aws ec2 describe-security-groups --region eu-west-1 \
+  --filters Name=group-name,Values='devops-g5-*' --query 'SecurityGroups[*].GroupName' --output text
+```
+
+Expected: no project ECS cluster, ALB, or project security groups remain.
