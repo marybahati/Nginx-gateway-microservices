@@ -218,6 +218,7 @@ service-a-1  | {"timestamp":"...","service":"service-a","event":"request_receive
 service-a-1  | {"timestamp":"...","service":"service-a","event":"request_failed","request_id":"fail-service-b-001","path":"/greet-service-b","status":500,"error":"fetch failed"}
 ```
 
+
 **Recover:**
 
 ```bash
