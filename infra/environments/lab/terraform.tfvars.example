@@ -1,0 +1,2 @@
+# Copy to terraform.tfvars locally (gitignored via *.auto.tfvars pattern — use this committed example).
+# image_tag = "4289726"
