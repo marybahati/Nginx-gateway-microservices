@@ -1,0 +1,134 @@
+variable "name_prefix" { type = string }
+variable "service_key" { type = string }
+variable "container_name" { type = string }
+variable "ecr_repository_name" { type = string }
+variable "ecs_cluster_name" { type = string }
+variable "ecs_service_name" { type = string }
+variable "buildspec_path" { type = string }
+variable "connection_arn" { type = string }
+variable "github_full_repository_id" {
+  type    = string
+  default = "marybahati/Nginx-gateway-microservices"
+}
+variable "github_branch" {
+  type    = string
+  default = "main"
+}
+variable "artifact_bucket" { type = string }
+variable "codebuild_role_arn" { type = string }
+variable "codepipeline_role_arn" { type = string }
+variable "tags" {
+  type    = map(string)
+  default = {}
+}
+variable "owner_tag" { type = string }
+
+resource "aws_codebuild_project" "this" {
+  name         = "${var.name_prefix}-codebuild-service-${var.service_key}"
+  service_role = var.codebuild_role_arn
+
+  artifacts {
+    type = "CODEPIPELINE"
+  }
+
+  environment {
+    compute_type                = "BUILD_GENERAL1_SMALL"
+    image                       = "aws/codebuild/amazonlinux2-x86_64-standard:5.0"
+    type                        = "LINUX_CONTAINER"
+    privileged_mode             = true
+    image_pull_credentials_type = "CODEBUILD"
+
+    environment_variable {
+      name  = "ECR_REPOSITORY"
+      value = var.ecr_repository_name
+    }
+    environment_variable {
+      name  = "CONTAINER_NAME"
+      value = var.container_name
+    }
+    environment_variable {
+      name  = "SERVICE_NAME"
+      value = "service-${var.service_key}"
+    }
+  }
+
+  source {
+    type      = "CODEPIPELINE"
+    buildspec = var.buildspec_path
+  }
+
+  tags = merge(var.tags, {
+    Name  = "${var.name_prefix}-codebuild-service-${var.service_key}"
+    Owner = var.owner_tag
+  })
+}
+
+resource "aws_codepipeline" "this" {
+  name     = "${var.name_prefix}-pipeline-service-${var.service_key}"
+  role_arn = var.codepipeline_role_arn
+
+  artifact_store {
+    location = var.artifact_bucket
+    type     = "S3"
+  }
+
+  stage {
+    name = "Source"
+    action {
+      name             = "Source"
+      category         = "Source"
+      owner            = "AWS"
+      provider         = "CodeStarSourceConnection"
+      version          = "1"
+      output_artifacts = ["SourceOutput"]
+      configuration = {
+        ConnectionArn        = var.connection_arn
+        FullRepositoryId     = var.github_full_repository_id
+        BranchName           = var.github_branch
+        DetectChanges        = "true"
+        OutputArtifactFormat = "CODE_ZIP"
+      }
+    }
+  }
+
+  stage {
+    name = "Build"
+    action {
+      name             = "Build"
+      category         = "Build"
+      owner            = "AWS"
+      provider         = "CodeBuild"
+      version          = "1"
+      input_artifacts  = ["SourceOutput"]
+      output_artifacts = ["BuildOutput"]
+      configuration = {
+        ProjectName = aws_codebuild_project.this.name
+      }
+    }
+  }
+
+  stage {
+    name = "Deploy"
+    action {
+      name            = "Deploy"
+      category        = "Deploy"
+      owner           = "AWS"
+      provider        = "ECS"
+      version         = "1"
+      input_artifacts = ["BuildOutput"]
+      configuration = {
+        ClusterName = var.ecs_cluster_name
+        ServiceName = var.ecs_service_name
+        FileName    = "imagedefinitions.json"
+      }
+    }
+  }
+
+  tags = merge(var.tags, {
+    Name  = "${var.name_prefix}-pipeline-service-${var.service_key}"
+    Owner = var.owner_tag
+  })
+}
+
+output "pipeline_name" { value = aws_codepipeline.this.name }
+output "codebuild_name" { value = aws_codebuild_project.this.name }
