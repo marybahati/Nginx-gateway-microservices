@@ -532,6 +532,7 @@ module "pipeline_a" {
   artifact_bucket          = aws_s3_bucket.pipeline_artifacts.bucket
   codebuild_role_arn       = aws_iam_role.codebuild.arn
   codepipeline_role_arn    = aws_iam_role.codepipeline.arn
+  watched_paths            = ["services/service-a/**", "shared/**"]
   owner_tag                = "service-a-owner"
   tags                     = local.common_tags
 }
@@ -552,6 +553,7 @@ module "pipeline_b" {
   artifact_bucket          = aws_s3_bucket.pipeline_artifacts.bucket
   codebuild_role_arn       = aws_iam_role.codebuild.arn
   codepipeline_role_arn    = aws_iam_role.codepipeline.arn
+  watched_paths            = ["services/service-b/**", "shared/**"]
   owner_tag                = "service-b-owner"
   tags                     = local.common_tags
 }
@@ -572,6 +574,7 @@ module "pipeline_c" {
   artifact_bucket          = aws_s3_bucket.pipeline_artifacts.bucket
   codebuild_role_arn       = aws_iam_role.codebuild.arn
   codepipeline_role_arn    = aws_iam_role.codepipeline.arn
+  watched_paths            = ["services/service-c/**", "shared/**"]
   owner_tag                = "service-c-owner"
   tags                     = local.common_tags
 }

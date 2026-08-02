@@ -23,6 +23,13 @@ variable "tags" {
 }
 variable "owner_tag" { type = string }
 
+# Paths that trigger this pipeline. Empty list = trigger on any change (CodePipeline default).
+# Provide glob patterns relative to repo root, e.g. ["services/service-b/**", "shared/**"].
+variable "watched_paths" {
+  type    = list(string)
+  default = []
+}
+
 resource "aws_codebuild_project" "this" {
   name         = "${var.name_prefix}-codebuild-service-${var.service_key}"
   service_role = var.codebuild_role_arn
@@ -85,7 +92,7 @@ resource "aws_codepipeline" "this" {
         ConnectionArn        = var.connection_arn
         FullRepositoryId     = var.github_full_repository_id
         BranchName           = var.github_branch
-        DetectChanges        = "true"
+        DetectChanges        = "false"
         OutputArtifactFormat = "CODE_ZIP"
       }
     }
@@ -128,6 +135,26 @@ resource "aws_codepipeline" "this" {
     Name  = "${var.name_prefix}-pipeline-service-${var.service_key}"
     Owner = var.owner_tag
   })
+
+  # Path-filtered trigger: only fire when files under watched_paths change on the branch.
+  # When watched_paths is empty the trigger fires on every push (open filter).
+  trigger {
+    provider_type = "CodeStarSourceConnection"
+    git_configuration {
+      source_action_name = "Source"
+      push {
+        branches {
+          includes = [var.github_branch]
+        }
+        dynamic "file_paths" {
+          for_each = length(var.watched_paths) > 0 ? [1] : []
+          content {
+            includes = var.watched_paths
+          }
+        }
+      }
+    }
+  }
 }
 
 output "pipeline_name" { value = aws_codepipeline.this.name }

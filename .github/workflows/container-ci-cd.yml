@@ -18,46 +18,74 @@ env:
   NODE_VERSION: "20"
 
 jobs:
-  verify:
-    name: Unit tests
+  verify-service-a:
+    name: Unit tests (service-a)
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        include:
-          - service: service-a
-            path: ./services/service-a
-          - service: service-b
-            path: ./services/service-b
-          - service: service-c
-            path: ./services/service-c
-
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      contains(toJson(github.event.commits.*.modified + github.event.commits.*.added), 'services/service-a/') ||
+      contains(toJson(github.event.commits.*.modified + github.event.commits.*.added), 'shared/')
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
-          cache-dependency-path: ${{ matrix.path }}/package-lock.json
+          cache-dependency-path: ./services/service-a/package-lock.json
+      - run: npm ci
+        working-directory: ./services/service-a
+      - run: npm test
+        working-directory: ./services/service-a
+      - run: npm run build --if-present
+        working-directory: ./services/service-a
 
-      - name: Install dependencies
-        working-directory: ${{ matrix.path }}
-        run: npm ci
+  verify-service-b:
+    name: Unit tests (service-b)
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      contains(toJson(github.event.commits.*.modified + github.event.commits.*.added), 'services/service-b/') ||
+      contains(toJson(github.event.commits.*.modified + github.event.commits.*.added), 'shared/')
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: ./services/service-b/package-lock.json
+      - run: npm ci
+        working-directory: ./services/service-b
+      - run: npm test
+        working-directory: ./services/service-b
+      - run: npm run build --if-present
+        working-directory: ./services/service-b
 
-      - name: Run tests
-        working-directory: ${{ matrix.path }}
-        run: npm test
-
-      - name: Build application
-        working-directory: ${{ matrix.path }}
-        run: npm run build --if-present
+  verify-service-c:
+    name: Unit tests (service-c)
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      contains(toJson(github.event.commits.*.modified + github.event.commits.*.added), 'services/service-c/') ||
+      contains(toJson(github.event.commits.*.modified + github.event.commits.*.added), 'shared/')
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: ./services/service-c/package-lock.json
+      - run: npm ci
+        working-directory: ./services/service-c
+      - run: npm test
+        working-directory: ./services/service-c
+      - run: npm run build --if-present
+        working-directory: ./services/service-c
 
   verify-compose:
     name: Local Compose smoke (nginx gateway)
     runs-on: ubuntu-latest
-    needs: verify
+    needs: [verify-service-a, verify-service-b, verify-service-c]
+    if: always() && !contains(needs.*.result, 'failure')
 
     steps:
       - name: Checkout repository
