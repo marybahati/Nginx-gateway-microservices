@@ -381,10 +381,27 @@ App change → tests → pipeline Build pushes :SHA → set image_tag_* → plan
 
 Pipelines: `devops-g5-iac-pipeline-service-{a,b,c}` (Build/push only; ECS deploy via Terraform).
 
-### 3.1 Confirm SHA in IaC ECR
+### 3.1 Pick a SHA and confirm it exists in IaC ECR
+
+List recent tags (do not invent a SHA):
 
 ```bash
-NEW_SHA=<paste-7+-char-git-sha>
+aws ecr describe-images --repository-name devops-g5-iac-service-a \
+  --query 'sort_by(imageDetails,& imagePushedAt)[-10:].imageTags' --output json
+```
+
+| Expected |
+|---|
+| JSON list of image tags (7–40 hex Git SHAs) |
+
+Set `NEW_SHA` to one real tag that exists on **all three** repos (must be a hex SHA, not empty):
+
+```bash
+# Currently deployed example: 5f9cf79
+# Tags present on A+B+C include: 494a035, 9a38de7, 5f9cf79
+NEW_SHA=494a035
+echo "NEW_SHA=$NEW_SHA"
+test -n "$NEW_SHA" || { echo "FAIL: NEW_SHA empty"; exit 1; }
 
 for r in devops-g5-iac-service-a devops-g5-iac-service-b devops-g5-iac-service-c; do
   echo "== $r =="
@@ -395,7 +412,8 @@ done
 
 | Expected |
 |---|
-| Each repo returns a tag list containing `$NEW_SHA` |
+| `NEW_SHA=` prints a non-empty hex SHA (e.g. `494a035`) |
+| Each repo returns that tag (not ParamValidation / ImageNotFound) |
 
 ```bash
 aws codepipeline list-pipeline-executions \
@@ -410,12 +428,12 @@ aws codepipeline list-pipeline-executions \
 
 ### 3.2 Update tfvars and apply
 
-Edit `infra/environments/lab/terraform.tfvars`:
+Edit `infra/environments/lab/terraform.tfvars` (same value as `$NEW_SHA`):
 
 ```hcl
-image_tag_a = "<NEW_SHA>"
-image_tag_b = "<NEW_SHA>"
-image_tag_c = "<NEW_SHA>"
+image_tag_a = "494a035"
+image_tag_b = "494a035"
+image_tag_c = "494a035"
 ```
 
 ```bash
@@ -453,10 +471,10 @@ terraform output deployed_image_tags
 
 | Expected |
 |---|
-| `/version` → `"version":"<NEW_SHA>"` HTTP 200 |
-| Shallow health `version` = `<NEW_SHA>` |
+| `/version` → `"version":"5f9cf79"` (or whatever SHA you set) HTTP 200 |
+| Shallow health `version` matches that SHA |
 | Greet HTTP 200 `"status":"success"` |
-| `deployed_image_tags` a/b/c all = `<NEW_SHA>` |
+| `deployed_image_tags` a/b/c all equal that SHA |
 
 ### 3.4 Safe infra change
 
