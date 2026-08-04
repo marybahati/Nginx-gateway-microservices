@@ -1,4 +1,5 @@
-FROM node:20.19.5-alpine3.22
+# Base image from Amazon ECR Public (avoids Docker Hub rate limits in CodeBuild).
+FROM public.ecr.aws/docker/library/node:20.19.5-alpine3.22
 
 RUN apk add --no-cache curl
 
