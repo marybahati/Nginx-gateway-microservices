@@ -77,8 +77,10 @@ resource "aws_codebuild_project" "this" {
 }
 
 resource "aws_codepipeline" "this" {
-  name     = "${var.name_prefix}-pipeline-service-${var.service_key}"
-  role_arn = var.codepipeline_role_arn
+  name          = "${var.name_prefix}-pipeline-service-${var.service_key}"
+  role_arn      = var.codepipeline_role_arn
+  # Path-filtered push triggers (file_paths) require pipeline type V2.
+  pipeline_type = "V2"
 
   artifact_store {
     location = var.artifact_bucket
