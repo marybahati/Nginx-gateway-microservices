@@ -1,10 +1,8 @@
 # Live demonstration runbook — Assignment 1 (Group 5)
 
-Oral demo script and cold operator checklist. Every step has a command and a pass/fail expected result.
-
 | Field | Value |
 |---|---|
-| Region | `eu-west-1` only |
+| Region | `eu-west-1` |
 | Tool | Terraform (≥1.6) + AWS provider |
 | Workload prefix | `devops-g5-iac-` |
 | Do not touch | console lab `devops-g5-*` (no `-iac`) |
@@ -15,111 +13,104 @@ Oral demo script and cold operator checklist. Every step has a command and a pas
 | Account | `827478161993` |
 | Lab dir | `infra/environments/lab` |
 
-```text
-Owner types. Team observes. Operator narrates. Coach asks questions. Evidence decides.
-```
-
-No one takes over another engineer’s terminal.
-
----
-
-## How to run this demo
-
-1. Export the constants block once at the start of every session.
-2. Execute steps **in order** within each demo.
-3. Read the **Expected** block **before** running the command; then show the live match.
-4. Say pass/fail out loud. If fail — stop, diagnose, do not improvise console creates.
-5. Demo 2 greet requires the sticky-callback image (see Demo 4). If greet is 504 with A=2, that is the scar — finish Demo 4, then release the fixed SHA before claiming architecture allow.
-
----
-
-## Constants (export once)
+Every block below is self-contained. Commands use literal resource names (no `$TG_NAME` / `$CLUSTER` env vars required).
 
 ```bash
 export AWS_DEFAULT_REGION=eu-west-1
 export AWS_REGION=eu-west-1
-export ACCOUNT=827478161993
-export CLUSTER=devops-g5-iac-cluster
-export SVC_A=devops-g5-iac-svc-service-a
-export SVC_B=devops-g5-iac-svc-service-b
-export SVC_C=devops-g5-iac-svc-service-c
-export ALB_NAME=devops-g5-iac-alb
-export TG_NAME=devops-g5-iac-tg-service-a
-export STATE_BUCKET=devops-g5-iac-tfstate-827478161993
-export LOCK_TABLE=devops-g5-iac-tflock
-export LAB_DIR="$(git rev-parse --show-toplevel)/infra/environments/lab"
-cd "$LAB_DIR"
-```
-
-After apply (or when stack is up):
-
-```bash
-export ALB="$(terraform output -raw alb_dns_name)"
-echo "ALB=$ALB"
 ```
 
 ---
 
-## Preflight (before Demo 1)
+## Preflight
 
-| Check | Command | Expected |
-|---|---|---|
-| Tools | `terraform version && aws --version && curl --version \| head -1` | Terraform ≥1.6; aws/curl present |
-| Identity | `aws sts get-caller-identity --output table` | `Account` = `827478161993` |
-| Region | `aws configure get region; echo $AWS_DEFAULT_REGION` | Both `eu-west-1` |
-| tfvars | `test -f terraform.tfvars && grep -E 'image_tag_[abc]' terraform.tfvars` | File exists; three SHA tags (not `latest`) |
-| Session Manager (Demos 2.x Exec) | `session-manager-plugin --version` | Plugin installed (required for `execute-command`) |
+### Tools
 
-If `terraform.tfvars` is missing:
+```bash
+terraform version
+aws --version
+curl --version | head -1
+session-manager-plugin --version
+```
+
+| Expected |
+|---|
+| Terraform ≥1.6 |
+| aws CLI present |
+| curl present |
+| Session Manager plugin present (needed for ECS Exec) |
+
+### Identity and Region
+
+```bash
+aws sts get-caller-identity --output table
+aws configure get region
+echo "$AWS_DEFAULT_REGION"
+```
+
+| Expected |
+|---|
+| `Account` = `827478161993` |
+| Region = `eu-west-1` |
+
+### tfvars
+
+```bash
+cd ~/Nginx-gateway-microservices/infra/environments/lab
+# or: cd "$(git rev-parse --show-toplevel)/infra/environments/lab"
+test -f terraform.tfvars && grep -E 'image_tag_[abc]' terraform.tfvars
+```
+
+| Expected |
+|---|
+| File exists |
+| Three SHA tags (not `latest`) |
+
+If missing:
 
 ```bash
 cp terraform.tfvars.example terraform.tfvars
-# edit image_tag_a/b/c to SHAs that exist in ECR (or use console bootstrap once)
+# set image_tag_a/b/c to SHAs that exist in ECR
 ```
 
-If the remote state backend does not exist yet (true zero):
+### Bootstrap (only if state backend does not exist)
 
 ```bash
-cd "$(git rev-parse --show-toplevel)/infra/bootstrap"
+cd ~/Nginx-gateway-microservices/infra/bootstrap
 terraform init
 terraform apply
 terraform output
-cd "$LAB_DIR"
 ```
 
-| Expected (bootstrap) |
+| Expected |
 |---|
-| Creates state bucket + DynamoDB lock only |
+| State bucket + DynamoDB lock created |
 | Outputs include `state_bucket` and `lock_table` |
-| Does **not** create VPC/ALB/ECS |
+| No VPC / ALB / ECS created |
 
 ---
 
 ## Demo 1 — Spin up from zero
 
-**Narrate:** highest risk is create of NAT + ALB + ECS; no console creates; state backend survives later destroy.
-
 ### 1.1 Prove workload is absent
 
 ```bash
-aws ecs describe-clusters --clusters "$CLUSTER" \
+aws ecs describe-clusters --clusters devops-g5-iac-cluster \
   --query '{status:clusters[0].status,failure:failures[0].reason}' --output table
 
 aws elbv2 describe-load-balancers \
-  --query "LoadBalancers[?LoadBalancerName=='$ALB_NAME'].LoadBalancerName" --output text
+  --query "LoadBalancers[?LoadBalancerName=='devops-g5-iac-alb'].LoadBalancerName" --output text
 ```
 
-| Expected | Pass if |
-|---|---|
-| Cluster `failure` = `MISSING`, **or** `status` = `INACTIVE` | No ACTIVE IaC cluster |
-| ALB name print is empty | No `devops-g5-iac-alb` |
+| Expected |
+|---|
+| Cluster `failure` = `MISSING`, or `status` = `INACTIVE` |
+| ALB query returns empty |
 
-Narrate: console `devops-g5-alb` / `devops-g5-cluster` may still exist — leave them alone.
-
-### 1.2 Init + validate
+### 1.2 Init and validate
 
 ```bash
-cd "$LAB_DIR"
+cd ~/Nginx-gateway-microservices/infra/environments/lab
 terraform init
 terraform fmt -check
 terraform validate
@@ -127,11 +118,11 @@ terraform validate
 
 | Expected |
 |---|
-| `Terraform has been successfully initialized!` (S3 backend + DynamoDB lock) |
+| `Terraform has been successfully initialized!` |
 | `fmt -check` exit 0 |
 | `Success! The configuration is valid.` |
 
-### 1.3 Plan (speak the full change brief)
+### 1.3 Plan
 
 ```bash
 terraform plan -out=lab.tfplan
@@ -139,21 +130,10 @@ terraform plan -out=lab.tfplan
 
 | Expected (first create) |
 |---|
-| Plan will create VPC `10.5.0.0/16`, NAT, ALB, cluster, SGs, ECR×3, ECS A=2 B=1 C=1, CodeBuild×3, CodePipeline×3 (build/push), artifact bucket, IAM |
-| **No** unexpected replacements |
-| Operator speaks: additions / replacements / user impact / security / cost / recovery / reason |
+| Create: VPC `10.5.0.0/16`, NAT, ALB, cluster, SGs, ECR×3, ECS A=2 B=1 C=1, CodeBuild×3, CodePipeline×3, artifact bucket, IAM |
+| Replacements: none |
 
-```text
-Expected additions: VPC, NAT, ALB, ECS, SGs, ECR iac, pipelines, logs
-Expected replacements: none
-User impact: new IaC ALB DNS; console lab unchanged
-Security impact: private tasks, SG refs, no public IPs
-Cost impact: NAT + ALB + Fargate — destroy after demos
-Recovery: terraform destroy then re-apply; state survives
-Reason: Assignment 1 greenfield create
-```
-
-### 1.4 Apply + prove clean follow-up plan
+### 1.4 Apply and follow-up plan
 
 ```bash
 terraform apply lab.tfplan
@@ -163,9 +143,9 @@ terraform output
 
 | Expected |
 |---|
-| Apply finishes with no console repair |
+| Apply completes |
 | Follow-up plan: `No changes. Your infrastructure matches the configuration.` |
-| Outputs include at least: |
+| Outputs match: |
 
 ```text
 alb_dns_name          = "devops-g5-iac-alb-….eu-west-1.elb.amazonaws.com"
@@ -178,60 +158,56 @@ pipelines             = {
   b = "devops-g5-iac-pipeline-service-b"
   c = "devops-g5-iac-pipeline-service-c"
 }
-release_path          = "build/push SHA via CodePipeline → set image_tag_{a,b,c} …"
 ```
 
-```bash
-export ALB="$(terraform output -raw alb_dns_name)"
-```
-
-### 1.5 Wait until Service A targets are healthy
+### 1.5 Target health
 
 ```bash
-TG=$(aws elbv2 describe-target-groups --names "$TG_NAME" \
+TG=$(aws elbv2 describe-target-groups --names devops-g5-iac-tg-service-a \
   --query 'TargetGroups[0].TargetGroupArn' --output text)
+echo "TG=$TG"
 
-# Poll until 2 healthy (usually 2–5 minutes after apply)
 aws elbv2 describe-target-health --target-group-arn "$TG" --output table
 ```
 
 | Expected |
 |---|
-| Two targets, `Target.Id` = private IPs (`10.5.10.x` / `10.5.11.x`) |
-| `TargetHealth.State` = `healthy` for both |
-| Target type implied: **ip** (awsvpc) |
+| `TG=` starts with `arn:aws:elasticloadbalancing:eu-west-1:…:targetgroup/devops-g5-iac-tg-service-a/…` |
+| Two targets with private IPs (`10.5.10.x` / `10.5.11.x`) |
+| Both `TargetHealth.State` = `healthy` |
 
-### 1.6 Services, AZs, no public IP, logs, discovery
+### 1.6 Services, AZs, public IP, logs, namespace
 
 ```bash
-aws ecs describe-services --cluster "$CLUSTER" \
-  --services "$SVC_A" "$SVC_B" "$SVC_C" \
+aws ecs describe-services --cluster devops-g5-iac-cluster \
+  --services devops-g5-iac-svc-service-a devops-g5-iac-svc-service-b devops-g5-iac-svc-service-c \
   --query 'services[*].{name:serviceName,desired:desiredCount,running:runningCount,status:status}' \
   --output table
 ```
 
-| Expected table |
+| Expected |
 |---|
-| `devops-g5-iac-svc-service-a` desired **2** running **2** status `ACTIVE` |
-| `…-service-b` desired **1** running **1** |
-| `…-service-c` desired **1** running **1** |
+| `devops-g5-iac-svc-service-a` desired 2 / running 2 / `ACTIVE` |
+| `devops-g5-iac-svc-service-b` desired 1 / running 1 / `ACTIVE` |
+| `devops-g5-iac-svc-service-c` desired 1 / running 1 / `ACTIVE` |
 
 ```bash
-TASKS=$(aws ecs list-tasks --cluster "$CLUSTER" --service-name "$SVC_A" \
+TASKS=$(aws ecs list-tasks --cluster devops-g5-iac-cluster \
+  --service-name devops-g5-iac-svc-service-a \
   --desired-status RUNNING --query 'taskArns' --output text)
 
-aws ecs describe-tasks --cluster "$CLUSTER" --tasks $TASKS \
+aws ecs describe-tasks --cluster devops-g5-iac-cluster --tasks $TASKS \
   --query 'tasks[*].{az:availabilityZone,last:lastStatus,ip:attachments[0].details[?name==`privateIPv4Address`].value|[0]}' \
   --output table
 
-# Prove no public IP assignment on the service network config
-aws ecs describe-services --cluster "$CLUSTER" --services "$SVC_A" \
+aws ecs describe-services --cluster devops-g5-iac-cluster \
+  --services devops-g5-iac-svc-service-a \
   --query 'services[0].networkConfiguration.awsvpcConfiguration.assignPublicIp' --output text
 ```
 
 | Expected |
 |---|
-| Two AZs present (e.g. `eu-west-1a` and `eu-west-1b`) |
+| Tasks in two AZs (e.g. `eu-west-1a` and `eu-west-1b`) |
 | Private IPs only |
 | `assignPublicIp` = `DISABLED` |
 
@@ -240,6 +216,7 @@ aws logs describe-log-groups \
   --log-group-name-prefix /ecs/devops-g5-iac-service \
   --query 'logGroups[*].logGroupName' --output table
 
+cd ~/Nginx-gateway-microservices/infra/environments/lab
 terraform output -raw namespace
 ```
 
@@ -248,30 +225,22 @@ terraform output -raw namespace
 | `/ecs/devops-g5-iac-service-a` |
 | `/ecs/devops-g5-iac-service-b` |
 | `/ecs/devops-g5-iac-service-c` |
-| Namespace print: `group5-iac.internal` |
-| Discovery names (narrate): `service-a`, `service-b`, `service-c` |
-
-**Demo 1 exit criteria:** clean plan + A=2/B=1/C=1 running + 2 healthy TG targets + private only + namespace shown.
+| `group5-iac.internal` |
 
 ---
 
 ## Demo 2 — Walk the architecture (allow + deny)
 
-**Path to narrate:**
-
 ```text
 Client → ALB:80 → Service A:3001 → Service B:3002 → Service C:3003 → callback A:3001
 ```
 
-For **each** hop: destination:port · route · SG · discovery name · log evidence · symptom if broken.
-
 ### 2.1 Allow — Internet → ALB → A
 
 ```bash
-cd "$LAB_DIR"
-export ALB="$(terraform output -raw alb_dns_name)"
-SHA="$(terraform output -json deployed_image_tags | python3 -c 'import sys,json; print(json.load(sys.stdin)["a"])')"
-
+cd ~/Nginx-gateway-microservices/infra/environments/lab
+ALB=$(terraform output -raw alb_dns_name)
+SHA=$(terraform output -json deployed_image_tags | python3 -c 'import sys,json; print(json.load(sys.stdin)["a"])')
 echo "ALB=$ALB SHA=$SHA"
 
 curl -sS -m 10 -w "\nHTTP %{http_code}\n" "http://$ALB/health?shallow=1"
@@ -279,92 +248,103 @@ curl -sS -m 10 -w "\nHTTP %{http_code}\n" "http://$ALB/version"
 curl -sS -m 25 -w "\nHTTP %{http_code}\n" "http://$ALB/greet-service-b"
 ```
 
-| Command | Exact expected shape | HTTP |
+| Command | Expected body | HTTP |
 |---|---|---|
-| `/health?shallow=1` | `{"service":"service-a","status":"ok","dependencies":{},"version":"<SHA>"}` | **200** |
-| `/version` | `{"service":"service-a","version":"<SHA>","status":"ok"}` | **200** |
-| `/greet-service-b` | `{"request_id":"<uuid>","status":"success","message":"Request completed successfully"}` | **200** |
+| `/health?shallow=1` | `{"service":"service-a","status":"ok","dependencies":{},"version":"<SHA>"}` | 200 |
+| `/version` | `{"service":"service-a","version":"<SHA>","status":"ok"}` | 200 |
+| `/greet-service-b` | `{"request_id":"<uuid>","status":"success","message":"Request completed successfully"}` | 200 |
 
-| Pass if |
+| Also expected |
 |---|
-| `version` equals declared `image_tag_a` (`$SHA`) |
-| Greet `status` is `success` with A desired=2 |
+| `version` equals `image_tag_a` (`$SHA`) |
+| Greet succeeds with Service A desired count = 2 |
 
-| If greet is `504` / `upstream request timeout` |
-|---|
-| Shallow health still 200 → classic A=2 callback scar (Demo 4). Do not invent SG fixes. Release sticky-callback SHA (Demo 3), then re-run this step. |
+If greet returns 504 / `upstream request timeout`, see Demo 4, then Demo 3 (deploy sticky-callback SHA), then re-run this step.
 
-### 2.2 Allow — A → B by Service Connect name
+### 2.2 Allow — A → B
 
 ```bash
-TASK_A=$(aws ecs list-tasks --cluster "$CLUSTER" --service-name "$SVC_A" \
+TASK_A=$(aws ecs list-tasks --cluster devops-g5-iac-cluster \
+  --service-name devops-g5-iac-svc-service-a \
   --desired-status RUNNING --query 'taskArns[0]' --output text)
+echo "TASK_A=$TASK_A"
 
-aws ecs execute-command --cluster "$CLUSTER" --task "$TASK_A" \
+aws ecs execute-command --cluster devops-g5-iac-cluster --task "$TASK_A" \
   --container service-a --interactive \
   --command "curl -sS -m 5 -w '\nHTTP %{http_code}\n' http://service-b:3002/health?shallow=1"
 ```
 
 | Expected |
 |---|
-| Session opens via SSM |
+| `TASK_A=` is a task ARN |
 | Body includes `"service":"service-b","status":"ok"` |
-| Trailing `HTTP 200` |
-| Narrate SG: `service-a-sg` → `service-b-sg` :3002 |
-| Narrate discovery: `service-b` in `group5-iac.internal` |
+| `HTTP 200` |
 
-### 2.3 Allow — B → C by Service Connect name
+### 2.3 Allow — B → C
 
 ```bash
-TASK_B=$(aws ecs list-tasks --cluster "$CLUSTER" --service-name "$SVC_B" \
+TASK_B=$(aws ecs list-tasks --cluster devops-g5-iac-cluster \
+  --service-name devops-g5-iac-svc-service-b \
   --desired-status RUNNING --query 'taskArns[0]' --output text)
+echo "TASK_B=$TASK_B"
 
-aws ecs execute-command --cluster "$CLUSTER" --task "$TASK_B" \
+aws ecs execute-command --cluster devops-g5-iac-cluster --task "$TASK_B" \
   --container service-b --interactive \
   --command "curl -sS -m 5 -w '\nHTTP %{http_code}\n' http://service-c:3003/health?shallow=1"
 ```
 
 | Expected |
 |---|
-| `"service":"service-c","status":"ok"` + `HTTP 200` |
-| Narrate SG: `service-b-sg` → `service-c-sg` :3003 |
+| `TASK_B=` is a task ARN |
+| Body includes `"service":"service-c","status":"ok"` |
+| `HTTP 200` |
 
 ### 2.4 Deny — A → C direct
 
 ```bash
-aws ecs execute-command --cluster "$CLUSTER" --task "$TASK_A" \
+TASK_A=$(aws ecs list-tasks --cluster devops-g5-iac-cluster \
+  --service-name devops-g5-iac-svc-service-a \
+  --desired-status RUNNING --query 'taskArns[0]' --output text)
+
+aws ecs execute-command --cluster devops-g5-iac-cluster --task "$TASK_A" \
   --container service-a --interactive \
   --command "curl -sS -m 5 -w '\nHTTP %{http_code}\n' http://service-c:3003/health?shallow=1; echo EXIT:\$?"
 ```
 
 | Expected |
 |---|
-| curl fails within ~5s (timeout / connection error) |
-| **Not** HTTP 200 with `service-c` body |
-| Narrate: no SG rule A→C; forward path is A→B→C only |
+| Timeout or connection error within ~5s |
+| Not HTTP 200 with a `service-c` body |
 
 ### 2.5 Deny — Internet → task private IP
 
 ```bash
-TG=$(aws elbv2 describe-target-groups --names "$TG_NAME" \
+TG=$(aws elbv2 describe-target-groups --names devops-g5-iac-tg-service-a \
   --query 'TargetGroups[0].TargetGroupArn' --output text)
 PRIV=$(aws elbv2 describe-target-health --target-group-arn "$TG" \
   --query 'TargetHealthDescriptions[0].Target.Id' --output text)
+echo "TG=$TG"
 echo "PRIV=$PRIV"
+
+# Stop if lookup failed (empty name / empty IP is NOT a pass)
+test -n "$TG" && test "$TG" != "None" || { echo "FAIL: target group ARN empty"; exit 1; }
+test -n "$PRIV" && [[ "$PRIV" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "FAIL: PRIV is not an IP ($PRIV)"; exit 1; }
 
 curl -sS -m 5 -w "\nHTTP %{http_code}\n" "http://$PRIV:3001/health?shallow=1" || echo "DENIED_AS_EXPECTED exit=$?"
 ```
 
 | Expected |
 |---|
-| Failure (timeout / no route / HTTP 000) |
-| Pass: laptop cannot reach task `:3001` on private IP |
+| `PRIV=` is a real private IP (e.g. `10.5.10.x`) |
+| Then: timeout / no route / HTTP 000 |
+| Pass only after `PRIV` is a valid IP — empty `PRIV` is a setup failure |
 
-### 2.6 Log evidence (one greet)
-
-Re-run greet once, then:
+### 2.6 Log evidence
 
 ```bash
+cd ~/Nginx-gateway-microservices/infra/environments/lab
+ALB=$(terraform output -raw alb_dns_name)
+
 curl -sS -m 25 -H "X-Request-ID: demo-$(date +%s)" "http://$ALB/greet-service-b"; echo
 
 aws logs tail /ecs/devops-g5-iac-service-a --since 5m --format short | tail -30
@@ -372,26 +352,24 @@ aws logs tail /ecs/devops-g5-iac-service-b --since 5m --format short | tail -20
 aws logs tail /ecs/devops-g5-iac-service-c --since 5m --format short | tail -20
 ```
 
-| Expected events |
+| Expected |
 |---|
 | A: `request_received` path `/greet-service-b` |
 | A: `request_forwarded` target `service-b` |
 | B: `request_received` path `/greet` |
 | C: `request_received` path `/greet-c` / callback |
-| A: `callback_received` / greet completes |
-| Same `request_id` visible across services |
+| A: callback received / greet completes |
+| Same `request_id` across services |
 
-### Hop cheat sheet (speak this)
+### Hop reference
 
-| Hop | Dest:port | Route | SG | Discovery | Broken symptom |
+| Hop | Dest:port | Route | SG | Discovery | If broken |
 |---|---|---|---|---|---|
 | Client→ALB | `:80` | IGW → ALB | ALB SG `0.0.0.0/0:80` | ALB DNS | connection fail |
 | ALB→A | `:3001` | VPC local | ALB→A SG | TG ip targets | 502 / unhealthy |
 | A→B | `:3002` | VPC local | A→B | `service-b` | greet fail; shallow OK |
 | B→C | `:3003` | VPC local | B→C | `service-c` | B/greet error |
 | C→A callback | `:3001` | VPC local | C→A | sticky task IP / `service-a` | 504 timeout |
-
-**Demo 2 exit criteria:** allow health+version+greet; Exec A→B and B→C 200; Exec A→C fail; internet→task IP fail; logs show the chain.
 
 ---
 
@@ -401,9 +379,9 @@ aws logs tail /ecs/devops-g5-iac-service-c --since 5m --format short | tail -20
 App change → tests → pipeline Build pushes :SHA → set image_tag_* → plan → apply → prove /version → clean plan
 ```
 
-Pipelines: `devops-g5-iac-pipeline-service-{a,b,c}`. Default: **Build/push only** (`enable_ecs_deploy = false`). ECS deploy is Terraform.
+Pipelines: `devops-g5-iac-pipeline-service-{a,b,c}` (Build/push only; ECS deploy via Terraform).
 
-### 3.1 Confirm SHA image exists in IaC ECR
+### 3.1 Confirm SHA in IaC ECR
 
 ```bash
 NEW_SHA=<paste-7+-char-git-sha>
@@ -418,9 +396,6 @@ done
 | Expected |
 |---|
 | Each repo returns a tag list containing `$NEW_SHA` |
-| Narrate: immutable tags; pipeline pushed; **IaC** will select deploy |
-
-Optional pipeline stage proof:
 
 ```bash
 aws codepipeline list-pipeline-executions \
@@ -431,12 +406,11 @@ aws codepipeline list-pipeline-executions \
 
 | Expected |
 |---|
-| Latest execution `Succeeded` (or show Build succeeded) |
-| No Deploy stage (or Deploy disabled) selecting ECS |
+| Latest execution `Succeeded` |
 
-### 3.2 Point Terraform at the new SHA
+### 3.2 Update tfvars and apply
 
-Edit `$LAB_DIR/terraform.tfvars`:
+Edit `infra/environments/lab/terraform.tfvars`:
 
 ```hcl
 image_tag_a = "<NEW_SHA>"
@@ -445,16 +419,15 @@ image_tag_c = "<NEW_SHA>"
 ```
 
 ```bash
-cd "$LAB_DIR"
+cd ~/Nginx-gateway-microservices/infra/environments/lab
 terraform plan -out=release.tfplan
 ```
 
-| Expected plan |
+| Expected |
 |---|
-| New task definition revisions for A/B/C (image URI `:NEW_SHA`) |
-| ECS services update to new task defs (rolling) |
-| **No** VPC / subnet / ALB replace |
-| Speak brief: replacements none; rolling deploy + circuit breaker |
+| New task definition revisions for A/B/C (image `:NEW_SHA`) |
+| ECS services update to new task defs |
+| No VPC / subnet / ALB replace |
 
 ```bash
 terraform apply release.tfplan
@@ -463,13 +436,15 @@ terraform plan
 
 | Expected |
 |---|
-| Services stabilize (A still 2/2) |
-| Follow-up plan: **No changes** |
+| Services stabilize (A 2/2, B 1/1, C 1/1) |
+| Follow-up plan: `No changes` |
 
 ### 3.3 Prove new SHA through ALB
 
 ```bash
-export ALB="$(terraform output -raw alb_dns_name)"
+cd ~/Nginx-gateway-microservices/infra/environments/lab
+ALB=$(terraform output -raw alb_dns_name)
+
 curl -sS -m 10 -w "\nHTTP %{http_code}\n" "http://$ALB/version"
 curl -sS -m 10 -w "\nHTTP %{http_code}\n" "http://$ALB/health?shallow=1"
 curl -sS -m 25 -w "\nHTTP %{http_code}\n" "http://$ALB/greet-service-b"
@@ -479,23 +454,21 @@ terraform output deployed_image_tags
 | Expected |
 |---|
 | `/version` → `"version":"<NEW_SHA>"` HTTP 200 |
-| Shallow health version matches |
+| Shallow health `version` = `<NEW_SHA>` |
 | Greet HTTP 200 `"status":"success"` |
-| `deployed_image_tags` all equal `<NEW_SHA>` |
+| `deployed_image_tags` a/b/c all = `<NEW_SHA>` |
 
-### 3.4 One safe infra change
-
-Example — tag-only in-place update (predict → plan → apply → prove):
+### 3.4 Safe infra change
 
 ```bash
 # Edit: aws_security_group.service_b tags add DemoNote = "assignment1-demo"
+cd ~/Nginx-gateway-microservices/infra/environments/lab
 terraform plan -out=safe.tfplan
 ```
 
 | Expected |
 |---|
-| Exactly the intended SG (or chosen resource) **update in-place** |
-| Narrate: in-place vs new task-def revision vs replace |
+| In-place update of the intended SG only |
 | No unexpected destroys |
 
 ```bash
@@ -505,58 +478,74 @@ terraform plan
 
 | Expected |
 |---|
-| Apply OK; follow-up plan clean |
-
-**Demo 3 exit criteria:** ECR has SHA → tfvars updated → only task-def/service churn → ALB `/version` shows SHA → clean plan.
+| Apply completes |
+| Follow-up plan: `No changes` |
 
 ---
 
-## Demo 4 — Golden scar (≤2 minutes)
+## Demo 4 — Golden scar
 
-Full write-up: [golden-scar.md](./golden-scar.md).
+See [golden-scar.md](./golden-scar.md).
 
-| Beat | Say / show |
+### Symptom (pre-fix image only)
+
+```bash
+cd ~/Nginx-gateway-microservices/infra/environments/lab
+ALB=$(terraform output -raw alb_dns_name)
+
+curl -sS -m 10 -w "\nHTTP %{http_code}\n" "http://$ALB/health?shallow=1"
+curl -sS -m 25 -w "\nHTTP %{http_code}\n" "http://$ALB/greet-service-b"
+```
+
+| Expected (scar) |
+|---|
+| Health HTTP 200 `"status":"ok"` |
+| Greet HTTP 504 / `upstream request timeout` |
+| Service A desired count = 2 |
+
+### Evidence
+
+```bash
+aws logs tail /ecs/devops-g5-iac-service-a --since 10m --format short | tail -40
+aws logs tail /ecs/devops-g5-iac-service-c --since 10m --format short | tail -40
+```
+
+| Expected (scar) |
+|---|
+| C callback returns 200 on one A task |
+| Originating A task logs `downstream_timeout` / `request_failed` |
+
+### After fixed SHA deployed (Demo 3)
+
+```bash
+cd ~/Nginx-gateway-microservices/infra/environments/lab
+ALB=$(terraform output -raw alb_dns_name)
+curl -sS -m 25 -w "\nHTTP %{http_code}\n" "http://$ALB/greet-service-b"
+```
+
+| Expected (fixed) |
+|---|
+| HTTP 200 `{"request_id":"…","status":"success","message":"Request completed successfully"}` |
+
+| Cause | Fix |
 |---|---|
-| Symptom | `/health?shallow=1` → 200; `/greet-service-b` → **504** with A desired=2 |
-| Belief | Service Connect incomplete or missing C→A SG |
-| Evidence | Logs: C callback **200** on the **wrong** A task; originating A logs `downstream_timeout` |
-| Disprove | SG worked; forward A→B→C worked; names resolved |
-| Cause | in-memory `pendingCallbacks` + Service Connect load-balancing across A replicas |
-| Fix | sticky `X-Callback-URL: http://<task-ip>:3001` through A→B→C |
-| Prevention | `shared/callback.js` + tests + this scar + greet proof with A=2 |
-
-Optional live proof of symptom (only if running **pre-fix** image):
-
-```bash
-curl -sS -m 25 -w "\nHTTP %{http_code}\n" "http://$ALB/greet-service-b"
-# Expected (scar): HTTP 504 / upstream request timeout
-```
-
-After fixed SHA deployed (Demo 3):
-
-```bash
-curl -sS -m 25 -w "\nHTTP %{http_code}\n" "http://$ALB/greet-service-b"
-# Expected (prevented): HTTP 200 {"status":"success",...}
-```
-
-**Demo 4 exit criteria:** coach hears cause ≠ “missing SG”; prevention is encoded in code/tests/docs.
+| In-memory `pendingCallbacks` + Service Connect LB across A replicas | Sticky `X-Callback-URL: http://<task-ip>:3001` via A→B→C (`shared/callback.js`) |
 
 ---
 
 ## Demo 5 — Tear down + cost sweep
 
-### 5.1 Review destroy plan
+### 5.1 Destroy plan
 
 ```bash
-cd "$LAB_DIR"
+cd ~/Nginx-gateway-microservices/infra/environments/lab
 terraform plan -destroy -out=destroy.tfplan
 ```
 
-| Expected narration |
+| Expected |
 |---|
-| **Removed:** VPC, NAT, ALB, ECS services/tasks/task defs, IaC SGs, Service Connect namespace, IaC ECR (if empty), pipelines/CodeBuild, IaC log groups, artifact bucket (as owned) |
-| **Survive:** `devops-g5-iac-tfstate-827478161993`, `devops-g5-iac-tflock`, console `devops-g5-*`, default VPC |
-| Confirm aloud: account `827478161993`, region `eu-west-1`, state key `lab/terraform.tfstate` |
+| Destroy: VPC, NAT, ALB, ECS, SGs, namespace, IaC ECR (if empty), pipelines/CodeBuild, IaC log groups, artifact bucket |
+| Survive: `devops-g5-iac-tfstate-827478161993`, `devops-g5-iac-tflock`, console `devops-g5-*`, default VPC |
 
 ### 5.2 Destroy
 
@@ -567,13 +556,13 @@ terraform apply destroy.tfplan
 | Expected |
 |---|
 | Destroy completes |
-| No deletes of console `devops-g5-*` (without `-iac`) |
-| No delete of state bucket/lock from this apply |
+| Console `devops-g5-*` untouched |
+| State bucket and lock table not deleted |
 
-### 5.3 Prove workload gone; backend remains
+### 5.3 Prove gone; backend remains
 
 ```bash
-aws ecs describe-clusters --clusters "$CLUSTER" \
+aws ecs describe-clusters --clusters devops-g5-iac-cluster \
   --query '{status:clusters[0].status,failure:failures[0].reason}' --output table
 
 aws elbv2 describe-load-balancers \
@@ -583,23 +572,23 @@ aws ec2 describe-nat-gateways \
   --filter Name=tag:Name,Values=devops-g5-iac-nat \
   --query 'NatGateways[?State!=`deleted`].{id:NatGatewayId,state:State}' --output table
 
-aws s3api head-bucket --bucket "$STATE_BUCKET"
-aws dynamodb describe-table --table-name "$LOCK_TABLE" \
+aws s3api head-bucket --bucket devops-g5-iac-tfstate-827478161993
+aws dynamodb describe-table --table-name devops-g5-iac-tflock \
   --query 'Table.TableStatus' --output text
 ```
 
 | Expected |
 |---|
 | Cluster `MISSING` or `INACTIVE` |
-| No IaC ALB names printed |
-| No active (`pending`/`available`) IaC NAT |
-| `head-bucket` succeeds (HTTP 200) |
-| Lock table status `ACTIVE` |
+| No IaC ALB names |
+| No active IaC NAT (`pending` / `available`) |
+| `head-bucket` succeeds |
+| Lock table `ACTIVE` |
 
 ### 5.4 Cost sweep
 
 ```bash
-aws ecs list-tasks --cluster "$CLUSTER" --output text 2>/dev/null || echo "cluster absent OK"
+aws ecs list-tasks --cluster devops-g5-iac-cluster --output text 2>/dev/null || echo "cluster absent OK"
 
 aws ec2 describe-nat-gateways \
   --filter Name=tag:Name,Values=devops-g5-iac-nat \
@@ -611,58 +600,21 @@ aws elbv2 describe-load-balancers \
 
 | Expected |
 |---|
-| No running IaC tasks |
+| No running IaC tasks / cluster absent |
 | NAT available count `0` |
 | IaC ALB count `0` |
-| Narrate: bootstrap destroy only with mentor approval |
-
-**Demo 5 exit criteria:** workload gone; backend intact; cost drivers (NAT/ALB/Fargate) zero for `-iac`.
 
 ---
 
-## Failure cheat sheet (during demo)
+## Failure cheat sheet
 
-| Symptom | First check | Likely cause |
+| Symptom | Check | Likely cause |
 |---|---|---|
-| Plan wants replace ALB/VPC | Stop; re-read plan | Accidental name/force-new change |
+| `Target group names cannot be empty` | Command used `$TG_NAME` unset | Use literal `devops-g5-iac-tg-service-a` |
+| `PRIV=` empty then curl exit 3 | TG lookup failed | Fix TG name first; empty PRIV is not deny pass |
+| Plan replaces ALB/VPC | Re-read plan; stop | Accidental force-new change |
 | TG unhealthy | `describe-target-health` + A logs | Bad image/tag, SG, or slow boot |
-| Shallow 200, greet 504 | A desired count + callback logs | Golden scar (Demo 4) |
-| Exec “TargetNotConnected” | task has Exec enabled + SSM plugin + task role | Wait for RUNNING; check plugin |
-| Pipeline green, ECS old SHA | `terraform output deployed_image_tags` | Forgot tfvars + apply (by design) |
-| Wrong stack touched | resource name has `-iac`? | Console lab uses `devops-g5-*` |
-
----
-
-## Change brief templates
-
-### Full (first create / destroy / networking / IAM / replace)
-
-```text
-Expected additions, changes and deletions:
-Expected replacements:
-User impact:
-Security impact:
-Cost impact:
-Recovery approach:
-Reason to proceed:
-```
-
-### Routine
-
-```text
-Expected delta:
-Unexpected plan action:
-Decision:
-```
-
----
-
-## Quick pass card (post each demo)
-
-| Demo | Pass when |
-|---|---|
-| 1 Spin up | Clean plan; A2/B1/C1; 2 healthy targets; private only |
-| 2 Architecture | Allow health/version/greet; Exec allow/deny; logs |
-| 3 Release | SHA in ECR → tfvars → apply → `/version` matches → clean plan |
-| 4 Scar | Cause articulated; prevention pointed at code/tests/docs |
-| 5 Destroy | Workload gone; state+lock live; NAT/ALB/Fargate clear |
+| Health 200, greet 504 | A desired=2 + callback logs | Golden scar (Demo 4) |
+| Exec `TargetNotConnected` | task RUNNING + SSM plugin + task role | Wait / fix plugin |
+| Pipeline green, ECS old SHA | `terraform output deployed_image_tags` | tfvars + apply not done |
+| Wrong stack | name has `-iac`? | Console lab is `devops-g5-*` |
