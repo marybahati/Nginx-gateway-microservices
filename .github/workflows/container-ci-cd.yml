@@ -2,7 +2,9 @@ name: Verify
 
 # PR / main gate only. Does NOT publish images or deploy to AWS.
 # Deploy path: merge to main → CodeConnections → CodePipeline → CodeBuild
-#   (buildspecs/service-*.yml) → ECR → ECS via imagedefinitions.json.
+#   (buildspecs/iac/service-generic.yml) → ECR → ECS via imagedefinitions.json.
+# Path filtering for AWS deploys is handled by the CodePipeline trigger block
+# in infra/modules/cicd-service — only the changed service's pipeline fires.
 
 on:
   pull_request:

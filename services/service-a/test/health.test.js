@@ -39,10 +39,14 @@ function startStubB(stubBPort, stubCPort) {
       return;
     }
     if (req.url === "/greet") {
-      // Forward to stub C
+      // Forward to stub C (preserve sticky callback URL)
       const requestId = req.headers["x-request-id"] || "stub-id";
+      const headers = { "X-Request-ID": requestId };
+      if (req.headers["x-callback-url"]) {
+        headers["X-Callback-URL"] = req.headers["x-callback-url"];
+      }
       await fetch(`http://127.0.0.1:${stubCPort}/greet-c`, {
-        headers: { "X-Request-ID": requestId },
+        headers,
       }).catch(() => {});
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ status: "forwarded" }));
@@ -64,8 +68,9 @@ function startStubC(stubCPort, serviceAPort) {
     }
     if (req.url === "/greet-c") {
       const requestId = req.headers["x-request-id"] || "stub-id";
-      // Callback to service A
-      await fetch(`http://127.0.0.1:${serviceAPort}/greeting-rcvd`, {
+      const callbackBase =
+        req.headers["x-callback-url"] || `http://127.0.0.1:${serviceAPort}`;
+      await fetch(`${callbackBase}/greeting-rcvd`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ request_id: requestId, source_service: "service-c", message: "stub", timestamp: new Date().toISOString() }),
@@ -108,6 +113,7 @@ test("greet-service-b completes the A→B→C chain", async (t) => {
   const stubC = await startStubC(STUB_C_PORT, PORT);
   const child = spawnService({
     SERVICE_B_URL: `http://127.0.0.1:${STUB_B_PORT}`,
+    CALLBACK_BASE_URL: `http://127.0.0.1:${PORT}`,
   });
   t.after(() => {
     child.kill("SIGTERM");

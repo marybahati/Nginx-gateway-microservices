@@ -6,6 +6,7 @@ const { createServiceMetrics } = require("../../shared/metrics");
 const { createObservabilityMiddleware } = require("../../shared/middleware");
 const { buildHealthResponse } = require("../../shared/health");
 const { getServiceVersion } = require("../../shared/version");
+const { isAllowedCallbackUrl } = require("../../shared/callback");
 
 initTracing("service-c");
 
@@ -73,7 +74,15 @@ app.get("/greet-c", async (req, res) => {
       timestamp: new Date().toISOString(),
     };
 
-    const callbackResponse = await fetch(`${SERVICE_A_CALLBACK_URL}/greeting-rcvd`, {
+    // Prefer sticky task URL from A (required when Service A has >1 task).
+    // Fall back to Service Connect name for single-replica / compose.
+    const requestedCallback = req.headers["x-callback-url"];
+    const callbackBase =
+      requestedCallback && isAllowedCallbackUrl(requestedCallback, SERVICE_A_CALLBACK_URL)
+        ? requestedCallback.replace(/\/$/, "")
+        : SERVICE_A_CALLBACK_URL;
+
+    const callbackResponse = await fetch(`${callbackBase}/greeting-rcvd`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -93,6 +102,7 @@ app.get("/greet-c", async (req, res) => {
       request_id: requestId,
       path: "/greet-c",
       target: "service-a",
+      callback_url: callbackBase,
       status: callbackResponse.status,
     });
 

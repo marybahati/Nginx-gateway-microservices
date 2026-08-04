@@ -61,11 +61,11 @@ variable "tags" {
 }
 
 locals {
-  service_name     = "${var.name_prefix}-svc-service-${var.service_key}"
-  task_family      = "${var.name_prefix}-td-service-${var.service_key}"
-  log_group_name   = "/ecs/${var.name_prefix}-service-${var.service_key}"
-  discovery_name   = "service-${var.service_key}"
-  image_uri        = "${var.ecr_repository_url}:${var.image_tag}"
+  service_name   = "${var.name_prefix}-svc-service-${var.service_key}"
+  task_family    = "${var.name_prefix}-td-service-${var.service_key}"
+  log_group_name = "/ecs/${var.name_prefix}-service-${var.service_key}"
+  discovery_name = "service-${var.service_key}"
+  image_uri      = "${var.ecr_repository_url}:${var.image_tag}"
   env_list = [
     for k, v in merge(
       {
@@ -189,11 +189,8 @@ resource "aws_ecs_service" "this" {
 
   depends_on = [aws_cloudwatch_log_group.this]
 
-  # CodePipeline ECS deploy owns new task-definition revisions (SHA images).
-  # Terraform still owns desired_count, network, Service Connect, circuit breaker.
-  lifecycle {
-    ignore_changes = [task_definition, force_new_deployment]
-  }
+  # Assignment 1: IaC selects the deployed immutable SHA (task_definition is owned here).
+  # Pipelines build/push SHA tags; operators update image_tag and apply.
 }
 
 output "service_name" { value = aws_ecs_service.this.name }
@@ -201,3 +198,4 @@ output "task_definition_arn" { value = aws_ecs_task_definition.this.arn }
 output "log_group_name" { value = aws_cloudwatch_log_group.this.name }
 output "image_uri" { value = local.image_uri }
 output "discovery_name" { value = local.discovery_name }
+output "assign_public_ip" { value = var.assign_public_ip }

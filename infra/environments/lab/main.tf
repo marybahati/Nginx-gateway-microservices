@@ -45,15 +45,40 @@ variable "name_prefix" {
   default = "devops-g5-iac"
 }
 
-# First boot only: existing console-lab image SHA already in devops-g5-service-*.
-# After apply, GitHub → CodePipeline builds/pushes to devops-g5-iac-service-* and deploys.
-variable "bootstrap_image_tag" {
+# Declared immutable image SHAs selected by IaC (Assignment 1 release contract).
+# Pipeline builds/pushes SHA tags to devops-g5-iac-service-*; operators update these and apply.
+variable "image_tag_a" {
   type    = string
-  default = "4289726"
+  default = "5f9cf79"
   validation {
-    condition     = var.bootstrap_image_tag != "latest" && can(regex("^[0-9a-f]{7,40}$", var.bootstrap_image_tag))
-    error_message = "bootstrap_image_tag must be a Git SHA, not latest."
+    condition     = var.image_tag_a != "latest" && can(regex("^[0-9a-f]{7,40}$", var.image_tag_a))
+    error_message = "image_tag_a must be a Git SHA, not latest."
   }
+}
+
+variable "image_tag_b" {
+  type    = string
+  default = "5f9cf79"
+  validation {
+    condition     = var.image_tag_b != "latest" && can(regex("^[0-9a-f]{7,40}$", var.image_tag_b))
+    error_message = "image_tag_b must be a Git SHA, not latest."
+  }
+}
+
+variable "image_tag_c" {
+  type    = string
+  default = "5f9cf79"
+  validation {
+    condition     = var.image_tag_c != "latest" && can(regex("^[0-9a-f]{7,40}$", var.image_tag_c))
+    error_message = "image_tag_c must be a Git SHA, not latest."
+  }
+}
+
+# First boot may pull from console-lab ECR until IaC repos have the declared SHA.
+variable "use_console_bootstrap_ecr" {
+  type        = bool
+  default     = false
+  description = "When true, pull images from devops-g5-service-* (console lab). When false, use devops-g5-iac-service-*."
 }
 
 variable "github_connection_arn" {
@@ -76,12 +101,17 @@ data "aws_caller_identity" "current" {}
 locals {
   azs     = ["eu-west-1a", "eu-west-1b"]
   account = data.aws_caller_identity.current.account_id
-  # Console-lab ECR (already has SHA tags) - first task start only
-  bootstrap_ecr = {
+  console_ecr = {
     a = "${local.account}.dkr.ecr.${var.aws_region}.amazonaws.com/devops-g5-service-a"
     b = "${local.account}.dkr.ecr.${var.aws_region}.amazonaws.com/devops-g5-service-b"
     c = "${local.account}.dkr.ecr.${var.aws_region}.amazonaws.com/devops-g5-service-c"
   }
+  iac_ecr = {
+    a = "${local.account}.dkr.ecr.${var.aws_region}.amazonaws.com/${var.name_prefix}-service-a"
+    b = "${local.account}.dkr.ecr.${var.aws_region}.amazonaws.com/${var.name_prefix}-service-b"
+    c = "${local.account}.dkr.ecr.${var.aws_region}.amazonaws.com/${var.name_prefix}-service-c"
+  }
+  service_ecr = var.use_console_bootstrap_ecr ? local.console_ecr : local.iac_ecr
   common_tags = {
     Project     = "devops-mentorship"
     Group       = "group-5"
@@ -271,8 +301,8 @@ module "service_b" {
   service_key        = "b"
   container_name     = "service-b"
   container_port     = 3002
-  image_tag          = var.bootstrap_image_tag
-  ecr_repository_url = local.bootstrap_ecr.b
+  image_tag          = var.image_tag_b
+  ecr_repository_url = local.service_ecr.b
   cluster_arn        = module.ecs_platform.cluster_arn
   cluster_name       = module.ecs_platform.cluster_name
   namespace_arn      = module.ecs_platform.namespace_arn
@@ -298,8 +328,8 @@ module "service_c" {
   service_key        = "c"
   container_name     = "service-c"
   container_port     = 3003
-  image_tag          = var.bootstrap_image_tag
-  ecr_repository_url = local.bootstrap_ecr.c
+  image_tag          = var.image_tag_c
+  ecr_repository_url = local.service_ecr.c
   cluster_arn        = module.ecs_platform.cluster_arn
   cluster_name       = module.ecs_platform.cluster_name
   namespace_arn      = module.ecs_platform.namespace_arn
@@ -327,8 +357,8 @@ module "service_a" {
   service_key          = "a"
   container_name       = "service-a"
   container_port       = 3001
-  image_tag            = var.bootstrap_image_tag
-  ecr_repository_url   = local.bootstrap_ecr.a
+  image_tag            = var.image_tag_a
+  ecr_repository_url   = local.service_ecr.a
   cluster_arn          = module.ecs_platform.cluster_arn
   cluster_name         = module.ecs_platform.cluster_name
   namespace_arn        = module.ecs_platform.namespace_arn
@@ -412,7 +442,7 @@ data "aws_iam_policy_document" "codebuild_assume" {
 resource "aws_iam_role" "codebuild" {
   name               = "${var.name_prefix}-codebuild-role"
   assume_role_policy = data.aws_iam_policy_document.codebuild_assume.json
-  tags = merge(local.common_tags, { Name = "${var.name_prefix}-codebuild-role", Owner = "platform-owner" })
+  tags               = merge(local.common_tags, { Name = "${var.name_prefix}-codebuild-role", Owner = "platform-owner" })
 }
 
 resource "aws_iam_role_policy" "codebuild" {
@@ -422,8 +452,8 @@ resource "aws_iam_role_policy" "codebuild" {
     Version = "2012-10-17"
     Statement = [
       {
-        Effect = "Allow"
-        Action = ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"]
+        Effect   = "Allow"
+        Action   = ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"]
         Resource = "*"
       },
       {
@@ -465,7 +495,7 @@ data "aws_iam_policy_document" "codepipeline_assume" {
 resource "aws_iam_role" "codepipeline" {
   name               = "${var.name_prefix}-codepipeline-role"
   assume_role_policy = data.aws_iam_policy_document.codepipeline_assume.json
-  tags = merge(local.common_tags, { Name = "${var.name_prefix}-codepipeline-role", Owner = "platform-owner" })
+  tags               = merge(local.common_tags, { Name = "${var.name_prefix}-codepipeline-role", Owner = "platform-owner" })
 }
 
 resource "aws_iam_role_policy" "codepipeline" {
@@ -519,64 +549,67 @@ resource "aws_iam_role_policy" "codepipeline" {
 module "pipeline_a" {
   source = "../../modules/cicd-service"
 
-  name_prefix              = var.name_prefix
-  service_key              = "a"
-  container_name           = "service-a"
-  ecr_repository_name      = aws_ecr_repository.services["service-a"].name
-  ecs_cluster_name         = module.ecs_platform.cluster_name
-  ecs_service_name         = module.service_a.service_name
-  buildspec_path           = "buildspecs/iac/service-generic.yml"
-  connection_arn           = var.github_connection_arn
+  name_prefix               = var.name_prefix
+  service_key               = "a"
+  container_name            = "service-a"
+  ecr_repository_name       = aws_ecr_repository.services["service-a"].name
+  ecs_cluster_name          = module.ecs_platform.cluster_name
+  ecs_service_name          = module.service_a.service_name
+  buildspec_path            = "buildspecs/iac/service-generic.yml"
+  connection_arn            = var.github_connection_arn
   github_full_repository_id = var.github_full_repository_id
-  github_branch            = var.github_branch
-  artifact_bucket          = aws_s3_bucket.pipeline_artifacts.bucket
-  codebuild_role_arn       = aws_iam_role.codebuild.arn
-  codepipeline_role_arn    = aws_iam_role.codepipeline.arn
-  owner_tag                = "service-a-owner"
-  tags                     = local.common_tags
+  github_branch             = var.github_branch
+  artifact_bucket           = aws_s3_bucket.pipeline_artifacts.bucket
+  codebuild_role_arn        = aws_iam_role.codebuild.arn
+  codepipeline_role_arn     = aws_iam_role.codepipeline.arn
+  watched_paths             = ["services/service-a/**", "shared/**"]
+  owner_tag                 = "service-a-owner"
+  tags                      = local.common_tags
 }
 
 module "pipeline_b" {
   source = "../../modules/cicd-service"
 
-  name_prefix              = var.name_prefix
-  service_key              = "b"
-  container_name           = "service-b"
-  ecr_repository_name      = aws_ecr_repository.services["service-b"].name
-  ecs_cluster_name         = module.ecs_platform.cluster_name
-  ecs_service_name         = module.service_b.service_name
-  buildspec_path           = "buildspecs/iac/service-generic.yml"
-  connection_arn           = var.github_connection_arn
+  name_prefix               = var.name_prefix
+  service_key               = "b"
+  container_name            = "service-b"
+  ecr_repository_name       = aws_ecr_repository.services["service-b"].name
+  ecs_cluster_name          = module.ecs_platform.cluster_name
+  ecs_service_name          = module.service_b.service_name
+  buildspec_path            = "buildspecs/iac/service-generic.yml"
+  connection_arn            = var.github_connection_arn
   github_full_repository_id = var.github_full_repository_id
-  github_branch            = var.github_branch
-  artifact_bucket          = aws_s3_bucket.pipeline_artifacts.bucket
-  codebuild_role_arn       = aws_iam_role.codebuild.arn
-  codepipeline_role_arn    = aws_iam_role.codepipeline.arn
-  owner_tag                = "service-b-owner"
-  tags                     = local.common_tags
+  github_branch             = var.github_branch
+  artifact_bucket           = aws_s3_bucket.pipeline_artifacts.bucket
+  codebuild_role_arn        = aws_iam_role.codebuild.arn
+  codepipeline_role_arn     = aws_iam_role.codepipeline.arn
+  watched_paths             = ["services/service-b/**", "shared/**"]
+  owner_tag                 = "service-b-owner"
+  tags                      = local.common_tags
 }
 
 module "pipeline_c" {
   source = "../../modules/cicd-service"
 
-  name_prefix              = var.name_prefix
-  service_key              = "c"
-  container_name           = "service-c"
-  ecr_repository_name      = aws_ecr_repository.services["service-c"].name
-  ecs_cluster_name         = module.ecs_platform.cluster_name
-  ecs_service_name         = module.service_c.service_name
-  buildspec_path           = "buildspecs/iac/service-generic.yml"
-  connection_arn           = var.github_connection_arn
+  name_prefix               = var.name_prefix
+  service_key               = "c"
+  container_name            = "service-c"
+  ecr_repository_name       = aws_ecr_repository.services["service-c"].name
+  ecs_cluster_name          = module.ecs_platform.cluster_name
+  ecs_service_name          = module.service_c.service_name
+  buildspec_path            = "buildspecs/iac/service-generic.yml"
+  connection_arn            = var.github_connection_arn
   github_full_repository_id = var.github_full_repository_id
-  github_branch            = var.github_branch
-  artifact_bucket          = aws_s3_bucket.pipeline_artifacts.bucket
-  codebuild_role_arn       = aws_iam_role.codebuild.arn
-  codepipeline_role_arn    = aws_iam_role.codepipeline.arn
-  owner_tag                = "service-c-owner"
-  tags                     = local.common_tags
+  github_branch             = var.github_branch
+  artifact_bucket           = aws_s3_bucket.pipeline_artifacts.bucket
+  codebuild_role_arn        = aws_iam_role.codebuild.arn
+  codepipeline_role_arn     = aws_iam_role.codepipeline.arn
+  watched_paths             = ["services/service-c/**", "shared/**"]
+  owner_tag                 = "service-c-owner"
+  tags                      = local.common_tags
 }
 
-# --- Architecture checks ---
+# --- Architecture checks (≥6 Assignment 1 rules as code) ---
 
 check "alb_spans_two_azs" {
   assert {
@@ -594,7 +627,7 @@ check "target_group_is_ip" {
 
 check "image_not_latest" {
   assert {
-    condition     = var.bootstrap_image_tag != "latest"
+    condition     = var.image_tag_a != "latest" && var.image_tag_b != "latest" && var.image_tag_c != "latest"
     error_message = "latest image tag is not accepted."
   }
 }
@@ -602,7 +635,7 @@ check "image_not_latest" {
 check "region_is_eu_west_1" {
   assert {
     condition     = var.aws_region == "eu-west-1"
-    error_message = "Wrong Region."
+    error_message = "Unapproved Region. Group 5 must use eu-west-1."
   }
 }
 
@@ -613,10 +646,72 @@ check "iac_ecr_immutable" {
   }
 }
 
+check "tasks_have_no_public_ip" {
+  assert {
+    condition     = module.service_a.assign_public_ip == false && module.service_b.assign_public_ip == false && module.service_c.assign_public_ip == false
+    error_message = "Fargate tasks must not receive public IPs."
+  }
+}
+
+check "alb_can_reach_service_a" {
+  assert {
+    condition     = aws_security_group_rule.alb_to_a.source_security_group_id == aws_security_group.alb.id && aws_security_group_rule.alb_to_a.from_port == 3001
+    error_message = "ALB security group must be allowed into Service A on port 3001."
+  }
+}
+
+check "service_a_can_reach_service_b" {
+  assert {
+    condition     = aws_security_group_rule.a_to_b.source_security_group_id == aws_security_group.service_a.id && aws_security_group_rule.a_to_b.from_port == 3002
+    error_message = "Service A must be allowed into Service B on port 3002."
+  }
+}
+
+check "service_b_can_reach_service_c" {
+  assert {
+    condition     = aws_security_group_rule.b_to_c.source_security_group_id == aws_security_group.service_b.id && aws_security_group_rule.b_to_c.from_port == 3003
+    error_message = "Service B must be allowed into Service C on port 3003."
+  }
+}
+
+check "service_a_cannot_reach_service_c_directly" {
+  assert {
+    condition = length([
+      for r in [
+        aws_security_group_rule.alb_to_a,
+        aws_security_group_rule.a_to_b,
+        aws_security_group_rule.b_to_c,
+        aws_security_group_rule.c_to_a_callback,
+      ] : r if r.security_group_id == aws_security_group.service_c.id && r.source_security_group_id == aws_security_group.service_a.id
+    ]) == 0
+    error_message = "Service A must not have a direct ingress path into Service C."
+  }
+}
+
+check "required_tags_present" {
+  assert {
+    condition     = local.common_tags.Project == "devops-mentorship" && local.common_tags.Group == "group-5" && local.common_tags.Environment == "lab"
+    error_message = "Required Project/Group/Environment tags are missing."
+  }
+}
+
 check "pipelines_exist" {
   assert {
     condition     = module.pipeline_a.pipeline_name != "" && module.pipeline_b.pipeline_name != "" && module.pipeline_c.pipeline_name != ""
     error_message = "All three GitHub-connected pipelines must exist."
+  }
+}
+
+# App-port ingress must use SG references only (no 0.0.0.0/0 on 3001/3002/3003).
+check "no_public_app_port_ingress_on_service_a" {
+  assert {
+    condition = alltrue([
+      for rule in [
+        aws_security_group_rule.alb_to_a,
+        aws_security_group_rule.c_to_a_callback,
+      ] : rule.cidr_blocks == null || length(coalesce(rule.cidr_blocks, [])) == 0
+    ])
+    error_message = "Service A application port must not be open to 0.0.0.0/0."
   }
 }
 
@@ -626,6 +721,13 @@ output "cluster_name" { value = module.ecs_platform.cluster_name }
 output "namespace" { value = module.ecs_platform.namespace_name }
 output "vpc_id" { value = module.network.vpc_id }
 output "name_prefix" { value = var.name_prefix }
+output "deployed_image_tags" {
+  value = {
+    a = var.image_tag_a
+    b = var.image_tag_b
+    c = var.image_tag_c
+  }
+}
 output "iac_ecr_urls" {
   value = { for k, r in aws_ecr_repository.services : k => r.repository_url }
 }
@@ -637,5 +739,5 @@ output "pipelines" {
   }
 }
 output "release_path" {
-  value = "merge to ${var.github_branch} on ${var.github_full_repository_id} → CodePipeline devops-g5-iac-pipeline-service-{a,b,c} → ECR devops-g5-iac-service-* :SHA → ECS deploy (no manual docker/SHA)"
+  value = "build/push SHA via CodePipeline → set image_tag_{a,b,c} in tfvars → terraform plan/apply → ECS rolling deploy → prove SHA via ALB /version"
 }

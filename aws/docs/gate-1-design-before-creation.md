@@ -1,14 +1,14 @@
 # Gate 1 — Design before creation  
-## Assignment 1: Greenfield ECS Fargate (OpenTofu)
+## Assignment 1: Greenfield ECS Fargate (Terraform)
 
 **Group:** `group-5`  
 **Region:** `eu-west-1` (assigned mentorship region)  
-**Tool:** **OpenTofu** (pinned CLI + AWS provider — versions recorded at first `init`)  
+**Tool:** **Terraform** (pinned CLI + AWS provider — versions recorded at first `init`)  
 **Scope:** Greenfield only. No workload `apply` until this Gate 1 review passes.  
 **Naming prefix:** `devops-g5-`  
 **Service Connect namespace:** `group5.internal`
 
-**Status:** Design for peer review — **zero workload resources created by IaC yet.**
+**Status:** Gate 1 design approved; implementation uses isolated prefix `devops-g5-iac-` / `group5-iac.internal` / VPC `10.5.0.0/16` so the console lab (`devops-g5-*`, `group5.internal`) remains untouched. Names below show the assignment canonical form; live stack adds the `-iac` segregator where noted in the operate runbook.
 
 ---
 
@@ -38,7 +38,7 @@ AWS account + assigned Region (eu-west-1) + engineer credentials
 └──────────────────────────┬───────────────────────────────────┘
                            │
 ┌─────── Workload root: infra/environments/lab ────────────────┐
-│  providers.tf (pinned OpenTofu + hashicorp/aws)              │
+│  providers.tf (pinned Terraform + hashicorp/aws)              │
 │  backend → bootstrap bucket/key                              │
 └──────────────────────────┬───────────────────────────────────┘
                            │
@@ -142,7 +142,7 @@ Owner types. Team observes. Operator narrates. Coach asks questions. Evidence de
 | App change + tests | Service owner | GitHub Actions / local tests |
 | Build & push **immutable Git SHA** image to ECR | Service owner / pipeline | CodeBuild `buildspecs/service-*.yml` |
 | Declare which SHA is deployed | **Release owner** + service owner | IaC variable / `image_tag` input to `ecs-service` module |
-| `tofu plan` / review / apply | Operator of the cycle | OpenTofu |
+| `terraform plan` / review / apply | Operator of the cycle | Terraform |
 | Prove new SHA via ALB `/version` or `/health` | Release owner | Runtime evidence |
 | Rollback | Release owner | Previous SHA in IaC → plan → apply |
 
@@ -289,11 +289,11 @@ Images: **immutable Git SHA tags only** — `latest` rejected by validation/test
 |---|---|
 | Separate bootstrap stack | `infra/bootstrap/` creates backend only |
 | S3 | Encrypted, versioned, **Block Public Access** on |
-| Locking | Enabled (DynamoDB lock table or approved OpenTofu lock mechanism) |
+| Locking | Enabled (DynamoDB lock table) |
 | Separation | Backend state **≠** workload state; different key/prefix |
 | Destroy | Workload `destroy` **must not** delete backend |
 | Local state | **Not** team source of truth |
-| Pinning | OpenTofu version + `hashicorp/aws` provider version pinned; lock file committed |
+| Pinning | Terraform version + `hashicorp/aws` provider version pinned; lock file committed |
 | Safety | No credentials, `*.tfstate`, plans, or secret tfvars in Git |
 
 Console may **inspect** only — never create/repair IaC-managed resources.
@@ -347,7 +347,7 @@ For each: risk reduced · trade-off · Well-Architected pillar · evidence.
 | **Risk reduced** | Two engineers overwrite state; lost state; no audit of prior configs |
 | **Trade-off** | Bootstrap complexity; must protect backend from destroy |
 | **Pillar** | Operational Excellence / Reliability |
-| **Evidence** | Second `tofu apply` from another laptop waits on lock; S3 versioning shows prior state; workload destroy leaves backend intact |
+| **Evidence** | Second `terraform apply` from another laptop waits on lock; S3 versioning shows prior state; workload destroy leaves backend intact |
 
 ---
 
@@ -375,6 +375,6 @@ Reject or detect: public task IP; ALB &lt; 2 AZs; TG type ≠ `ip`; app port ope
 
 ## 11. One-line summary
 
-**Group 5 will greenfield A→B→C on OpenTofu in a custom 2-AZ VPC (public ALB + private Fargate, SG-referenced contracts, SHA releases, remote locked state) — design first, then Discover / Teach / Operate with rotating owners.**
+**Group 5 will greenfield A→B→C on Terraform in a custom 2-AZ VPC (public ALB + private Fargate, SG-referenced contracts, SHA releases, remote locked state) — design first, then Discover / Teach / Operate with rotating owners.**
 
 **No workload resources are created until this design is peer-reviewed.** Then: bootstrap backend → first workload plan → apply.
