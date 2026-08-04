@@ -1,2 +1,7 @@
-# Copy to terraform.tfvars locally (gitignored via *.auto.tfvars pattern — use this committed example).
-# image_tag = "4289726"
+# Copy to terraform.tfvars (do not commit secrets). Image tags must be Git SHAs.
+aws_region                 = "eu-west-1"
+name_prefix                = "devops-g5-iac"
+use_console_bootstrap_ecr  = false
+image_tag_a                = "5f9cf79"
+image_tag_b                = "5f9cf79"
+image_tag_c                = "5f9cf79"

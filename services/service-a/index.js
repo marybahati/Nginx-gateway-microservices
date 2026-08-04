@@ -6,6 +6,7 @@ const { createServiceMetrics } = require("../../shared/metrics");
 const { createObservabilityMiddleware } = require("../../shared/middleware");
 const { buildHealthResponse } = require("../../shared/health");
 const { getServiceVersion } = require("../../shared/version");
+const { resolveCallbackBaseUrl } = require("../../shared/callback");
 
 initTracing("service-a");
 
@@ -17,6 +18,8 @@ const SERVICE_B_URL = process.env.SERVICE_B_URL || "http://service-b:3002";
 const SERVICE_B_HEALTH_URL =
   process.env.SERVICE_B_HEALTH_URL || "http://service-b:3002/health";
 const CALLBACK_TIMEOUT_MS = Number(process.env.CALLBACK_TIMEOUT_MS) || 30000;
+
+let cachedCallbackBaseUrl;
 
 const metrics = createServiceMetrics(SERVICE_NAME);
 const app = express();
@@ -87,8 +90,16 @@ app.get("/greet-service-b", async (req, res) => {
   const callbackPromise = waitForCallback(requestId);
 
   try {
+    if (!cachedCallbackBaseUrl) {
+      cachedCallbackBaseUrl = await resolveCallbackBaseUrl(PORT);
+    }
+
     const response = await fetch(`${SERVICE_B_URL}/greet`, {
-      headers: { "X-Request-ID": requestId },
+      headers: {
+        "X-Request-ID": requestId,
+        // Sticky callback target for multi-replica Service A (desiredCount=2).
+        "X-Callback-URL": cachedCallbackBaseUrl,
+      },
     });
 
     if (!response.ok) {
@@ -103,6 +114,7 @@ app.get("/greet-service-b", async (req, res) => {
       path: "/greet-service-b",
       target: "service-b",
       status: response.status,
+      callback_url: cachedCallbackBaseUrl,
     });
 
     await callbackPromise;

@@ -50,8 +50,8 @@ resource "aws_subnet" "public" {
   map_public_ip_on_launch = true
 
   tags = merge(var.tags, {
-    Name = "${var.name_prefix}-public-${count.index == 0 ? "1a" : "1b"}"
-    Tier = "public"
+    Name  = "${var.name_prefix}-public-${count.index == 0 ? "1a" : "1b"}"
+    Tier  = "public"
     Owner = "platform-owner"
   })
 }

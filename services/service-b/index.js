@@ -70,8 +70,13 @@ app.get("/greet", async (req, res) => {
   });
 
   try {
+    const headers = { "X-Request-ID": requestId };
+    if (req.headers["x-callback-url"]) {
+      headers["X-Callback-URL"] = req.headers["x-callback-url"];
+    }
+
     const response = await fetch(`${SERVICE_C_URL}/greet-c`, {
-      headers: { "X-Request-ID": requestId },
+      headers,
     });
 
     if (!response.ok) {

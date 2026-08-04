@@ -30,6 +30,12 @@ variable "watched_paths" {
   default = []
 }
 
+variable "enable_ecs_deploy" {
+  type        = bool
+  default     = false
+  description = "When false (Assignment 1 default), pipeline builds/pushes SHA images only; IaC selects the deployed tag."
+}
+
 resource "aws_codebuild_project" "this" {
   name         = "${var.name_prefix}-codebuild-service-${var.service_key}"
   service_role = var.codebuild_role_arn
@@ -114,19 +120,22 @@ resource "aws_codepipeline" "this" {
     }
   }
 
-  stage {
-    name = "Deploy"
-    action {
-      name            = "Deploy"
-      category        = "Deploy"
-      owner           = "AWS"
-      provider        = "ECS"
-      version         = "1"
-      input_artifacts = ["BuildOutput"]
-      configuration = {
-        ClusterName = var.ecs_cluster_name
-        ServiceName = var.ecs_service_name
-        FileName    = "imagedefinitions.json"
+  dynamic "stage" {
+    for_each = var.enable_ecs_deploy ? [1] : []
+    content {
+      name = "Deploy"
+      action {
+        name            = "Deploy"
+        category        = "Deploy"
+        owner           = "AWS"
+        provider        = "ECS"
+        version         = "1"
+        input_artifacts = ["BuildOutput"]
+        configuration = {
+          ClusterName = var.ecs_cluster_name
+          ServiceName = var.ecs_service_name
+          FileName    = "imagedefinitions.json"
+        }
       }
     }
   }

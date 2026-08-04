@@ -2,14 +2,12 @@
 
 **Does not touch** console lab `devops-g5-*` (without `-iac`).
 
-| | Console lab | This Terraform exercise |
+| | Console lab | This IaC exercise |
 |---|---|---|
 | Prefix | `devops-g5-` | `devops-g5-iac-` |
 | Namespace | `group5.internal` | `group5-iac.internal` |
 | VPC | default `172.31.0.0/16` | `10.5.0.0/16` |
-| Release | CodePipeline → console ECS | **GitHub → CodePipeline `devops-g5-iac-pipeline-service-*` → ECR `devops-g5-iac-service-*` → ECS `devops-g5-iac-svc-*`** |
-
-**No manual `docker push` or hand-editing SHA for day-to-day releases.** Merge to `main` triggers the three IaC pipelines (same CodeConnections app as before).
+| Release | CodePipeline → console ECS | **Pipeline builds/pushes SHA → IaC `image_tag_*` → terraform apply** |
 
 ```text
 Predict → Plan → Review → Apply → Prove → Release → Destroy → Rebuild
@@ -17,25 +15,25 @@ Predict → Plan → Review → Apply → Prove → Release → Destroy → Rebu
 
 ---
 
-## End-to-end release (GitHub connected)
+## Release contract (Assignment 1)
 
 ```text
-PR → merge main
-  → CodeConnections webhook
-  → devops-g5-iac-pipeline-service-{a,b,c}
-  → CodeBuild (buildspecs/iac/service-generic.yml)
-       IMAGE_TAG = git SHA (7 chars)
-       push → devops-g5-iac-service-{a,b,c}:SHA
-       imagedefinitions.json
-  → ECS Deploy → devops-g5-iac-svc-service-{a,b,c}
+Application change
+→ tests
+→ build SHA-tagged image (CodePipeline Build stage)
+→ push to ECR devops-g5-iac-service-*
+→ update image_tag_a / image_tag_b / image_tag_c in terraform.tfvars
+→ terraform plan → review → apply
+→ ECS rolling deployment
+→ new SHA visible through ALB /version
+→ clean follow-up plan
 ```
 
-Terraform creates the pipelines and ECS services once.  
-`lifecycle.ignore_changes` on `task_definition` lets the pipeline own new SHA revisions.
+Pipelines **do not** Deploy to ECS by default (`enable_ecs_deploy = false`). IaC selects the deployed SHA.
 
-First boot only: tasks start from an existing console-lab image SHA (`bootstrap_image_tag`, default `4289726`) so apply does not need a laptop docker build. The **next merge to main** (or “Release change” on the pipeline) switches them onto `devops-g5-iac-service-*` SHA tags.
+First boot: set `use_console_bootstrap_ecr = true` only if IaC ECR lacks the declared tag; otherwise pull from `devops-g5-iac-service-*`.
 
-Terraform creates B → C → A, then force-redeploys all three once (`terraform_data.service_connect_mesh_refresh`) so Service Connect injects the full peer set into each task’s `/etc/hosts`. Without that bounce, early A tasks only resolve `service-a` and greet fails with `fetch failed`.
+Terraform creates B → C → A, then force-redeploys once (`terraform_data.service_connect_mesh_refresh`) so Service Connect injects the full peer set. See [golden-scar.md](./golden-scar.md) for the A=2 callback fix (`X-Callback-URL`).
 
 ---
 
@@ -44,17 +42,18 @@ Terraform creates B → C → A, then force-redeploys all three once (`terraform
 ### Prerequisites
 
 ```bash
-export PATH="/opt/homebrew/bin:$PATH"
-terraform version   # >= 1.6
+terraform version          # >= 1.6
 aws sts get-caller-identity
 aws configure get region   # eu-west-1
+cp infra/environments/lab/terraform.tfvars.example infra/environments/lab/terraform.tfvars
+# edit image_tag_* as needed
 ```
 
 ### Full change brief — first create
 
 ```text
 Expected additions: VPC 10.5.0.0/16, NAT, ALB, cluster, SGs, ECR iac×3,
-  ECS A=2 B=1 C=1, CodeBuild×3, CodePipeline×3, artifact bucket, IAM
+  ECS A=2 B=1 C=1, CodeBuild×3, CodePipeline×3 (build/push), artifact bucket, IAM
 Expected replacements: none
 User impact: new ALB DNS (iac); console lab unchanged
 Security impact: private tasks, SG refs, no public IPs
@@ -67,8 +66,7 @@ Reason: Assignment 1 greenfield
 
 ```bash
 cd infra/bootstrap
-terraform init
-terraform apply -auto-approve
+terraform init && terraform apply
 terraform output
 ```
 
@@ -83,20 +81,12 @@ terraform plan    # follow-up must be clean
 terraform output
 ```
 
-Save `greet_url` / `alb_dns_name` and `pipelines`.
-
-### Kick first GitHub-built images
-
-`buildspecs/iac/service-generic.yml` and `infra/` must be on `main` (pipelines pull from GitHub, not your laptop).
+### Architecture tests
 
 ```bash
-# After push/merge to main — or to force a run without an app change:
-aws codepipeline start-pipeline-execution --name devops-g5-iac-pipeline-service-a --region eu-west-1
-aws codepipeline start-pipeline-execution --name devops-g5-iac-pipeline-service-b --region eu-west-1
-aws codepipeline start-pipeline-execution --name devops-g5-iac-pipeline-service-c --region eu-west-1
+cd infra/modules/ecs-service && terraform test
+cd infra/modules/alb && terraform test
 ```
-
-Day-to-day: merge to `main` → WebhookV2 → all three IaC pipelines (SHA from `CODEBUILD_RESOLVED_SOURCE_VERSION`, no manual docker/tag).
 
 ---
 
@@ -106,37 +96,37 @@ Day-to-day: merge to `main` → WebhookV2 → all three IaC pipelines (SHA from 
 ALB=$(terraform -chdir=infra/environments/lab output -raw alb_dns_name)
 curl -sS "http://$ALB/health?shallow=1"
 curl -sS "http://$ALB/greet-service-b"
+curl -sS "http://$ALB/version"
 ```
 
 | Test | Expected |
 |---|---|
 | Internet → ALB | 200 |
-| greet A→B→C→callback | 200 success |
+| greet A→B→C→callback with A=2 | 200 success |
 | Exec A → `service-b:3002/health` | 200 |
 | Exec B → `service-c:3003/health` | 200 |
 | Exec A → `service-c:3003/health` | deny/timeout |
 | Task public IP | none |
 | Service A tasks | 2 AZs |
-| Pipelines | `devops-g5-iac-pipeline-service-{a,b,c}` succeed on merge |
+| Deployed SHA | matches `image_tag_*` |
 
 ---
 
-## 3. Release a new version (no manual SHA)
+## 3. Release a new version
 
-1. Change app (e.g. version string) on a branch → PR → merge `main`.  
-2. Watch CodePipeline `devops-g5-iac-pipeline-service-*` (Source = WebhookV2).  
-3. Confirm new 7-char SHA in ECR `devops-g5-iac-service-*`.  
-4. Confirm ALB `/health` or `/version` shows that SHA.  
-5. `terraform plan` in lab → **no unexpected task-def churn** (ignored).
-
-Safe infra change example (desired count / tag): edit Terraform → plan → apply → clean follow-up plan.
+1. App change + tests → merge/build → pipeline pushes `:SHA` to IaC ECR.  
+2. Set `image_tag_a` (and b/c if needed) in `terraform.tfvars`.  
+3. `terraform plan` — expect new task-definition revisions.  
+4. `terraform apply` — rolling deploy.  
+5. Prove SHA via ALB.  
+6. One safe infra change (desired count / log retention / tag) → clean plan.
 
 ---
 
 ## 4. Tear down
 
 ```text
-Expected deletions: all devops-g5-iac-* workload (VPC, NAT, ALB, ECS, pipelines, iac ECR, …)
+Expected deletions: all devops-g5-iac-* workload
 Survive: devops-g5-iac-tfstate-*, devops-g5-iac-tflock, console devops-g5-*, default VPC
 ```
 
@@ -145,8 +135,7 @@ cd infra/environments/lab
 terraform plan -destroy -out=destroy.tfplan
 terraform apply destroy.tfplan
 # Cost sweep: no NAT/ALB/Fargate for -iac
-# Backend remains until mentors approve:
-# cd ../bootstrap && terraform destroy
+# Backend remains until mentors approve bootstrap destroy
 ```
 
 ---
@@ -155,9 +144,10 @@ terraform apply destroy.tfplan
 
 ```bash
 git clone <repo> && cd <repo>
-cd infra/bootstrap && terraform init && terraform apply -auto-approve
-cd ../environments/lab && terraform init && terraform apply -auto-approve
-# prove + merge to main for pipeline SHA refresh
+cp infra/environments/lab/terraform.tfvars.example infra/environments/lab/terraform.tfvars
+cd infra/bootstrap && terraform init && terraform apply
+cd ../environments/lab && terraform init && terraform apply
+# prove contracts; release via image_tag_* update
 ```
 
 Cycle 2: another engineer operates; coach asks questions only.
@@ -166,7 +156,9 @@ Cycle 2: another engineer operates; coach asks questions only.
 
 ## 6. Safety
 
-- Never commit state/credentials/plans  
+- Never commit state/credentials/plans/`terraform.tfvars` with secrets  
 - Never delete console `devops-g5-*` (no `-iac`) via this stack  
 - Region `eu-west-1` only  
-- Console = inspect only for Terraform-managed resources  
+- Console = inspect only for IaC-managed resources  
+
+See also: [live-demo-runbook.md](./live-demo-runbook.md), [golden-scar.md](./golden-scar.md), [cycle-records.md](./cycle-records.md), [gate-1-design-before-creation.md](./gate-1-design-before-creation.md).
