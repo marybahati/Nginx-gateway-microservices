@@ -59,6 +59,7 @@ See [Running with Docker Compose](#running-with-docker-compose) for start comman
   - [Makefile shortcuts](#makefile-shortcuts)
 - [Container CI/CD Deployment](#container-cicd-deployment)
   - [Latest Deployed Version](#latest-deployed-version)
+  - [Assignment 1 — Terraform IaC lab](#assignment-1--terraform-iac-lab)
   - [Deploy](#deploy)
   - [Verify](#verify)
 - [API contract](#api-contract)
@@ -214,6 +215,7 @@ The system demonstrates operational patterns used in production:
 
 The system is a four-container stack with a public edge network for Nginx and an internal Docker bridge network (`private`) for service traffic. External clients never talk to the microservices directly — all public HTTP traffic enters through Nginx, which forwards only Service A routes. Services A, B, and C exist only on the internal network and are invoked by other containers using Compose DNS names.
 
+
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │  Host machine                                                               │
@@ -263,6 +265,7 @@ service-c ──┘
 4. **nginx** starts only after Service A is healthy, avoiding 502s on cold boot.
 
 Each container uses `restart: unless-stopped` so the stack recovers automatically after a host reboot unless you explicitly stopped it. Runtime containers also run as non-root users with dropped Linux capabilities and `no-new-privileges`.
+
 
 ### End-to-end request flow
 
@@ -326,6 +329,7 @@ After pulling this config, run `docker compose restart nginx` once. Node.js serv
 | **502** after container restart | Nginx hitting stale `service-a` IP, or service-a not running |
 | **500** while B is down | Expected — Nginx reached A; A could not reach B |
 
+
 #### Service A (orchestrator)
 
 - Public-facing application logic; the only service reachable from outside via Nginx.
@@ -347,6 +351,7 @@ After pulling this config, run `docker compose restart nginx` once. Node.js serv
 - Internal-only; handles `GET /greet-c`.
 - After processing, **POSTs back** to Service A at `http://service-a:3001/greeting-rcvd` with `{ request_id, source_service, message, timestamp }`.
 - This callback is what unblocks Service A's waiting HTTP handler.
+
 
 #### Service discovery
 
@@ -621,6 +626,21 @@ GitHub Actions runs **verify only** on PRs and pushes to `main`: unit tests + lo
 **AWS deploy path (Fargate):** merge to `main` → CodeConnections → CodePipeline → CodeBuild (`buildspecs/service-*.yml`) → ECR (SHA tag) → ECS rolling deploy. Pipelines and connections already exist in `eu-west-1` in pipelines under aws codepipeline.
 
 Public entry on AWS is the Application Load Balancer (`devops-g5-alb`), not nginx. Keep nginx in `docker-compose.yml` for local development only.
+
+### Assignment 1 — Terraform IaC lab
+
+Greenfield Fargate stack (separate from the console lab):
+
+| | Console lab | Terraform IaC lab |
+|---|---|---|
+| Prefix | `devops-g5-` | `devops-g5-iac-` |
+| Namespace | `group5.internal` | `group5-iac.internal` |
+| Buildspec | `buildspecs/service-*.yml` | `buildspecs/iac/service-generic.yml` |
+| Base image | ECR Public Node (`public.ecr.aws/docker/library/node:…`) | same |
+
+- Design: [aws/docs/gate-1-design-before-creation.md](aws/docs/gate-1-design-before-creation.md)
+- Operate / demo: [aws/docs/assignment-1-operate-runbook.md](aws/docs/assignment-1-operate-runbook.md), [aws/docs/live-demo-runbook.md](aws/docs/live-demo-runbook.md)
+- Lab root: `infra/environments/lab` (`terraform plan` / `apply` in that directory only)
 
 Optional local Compose with pre-built images (`docker-compose.prod.yml`) still uses Docker Hub variables if you choose that path; it is **not** the Fargate deploy path.
 
