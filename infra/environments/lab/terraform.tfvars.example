@@ -2,6 +2,8 @@
 aws_region                 = "eu-west-1"
 name_prefix                = "devops-g5-iac"
 use_console_bootstrap_ecr  = false
-image_tag_a                = "5f9cf79"
-image_tag_b                = "5f9cf79"
-image_tag_c                = "5f9cf79"
+enable_codepipeline        = false
+enable_ecs_tasks           = true
+image_tag_a                = "0000000"
+image_tag_b                = "0000000"
+image_tag_c                = "0000000"
