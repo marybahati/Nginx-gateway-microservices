@@ -189,8 +189,11 @@ resource "aws_ecs_service" "this" {
 
   depends_on = [aws_cloudwatch_log_group.this]
 
-  # Assignment 1: IaC selects the deployed immutable SHA (task_definition is owned here).
-  # Pipelines build/push SHA tags; operators update image_tag and apply.
+  # GitHub Actions (OIDC) owns rolling image deploys after first apply.
+  # Terraform still owns desired_count, network, Service Connect, and SG wiring.
+  lifecycle {
+    ignore_changes = [task_definition, force_new_deployment]
+  }
 }
 
 output "service_name" { value = aws_ecs_service.this.name }

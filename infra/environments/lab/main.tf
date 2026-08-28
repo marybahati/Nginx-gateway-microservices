@@ -9,7 +9,7 @@ terraform {
   }
 
   backend "s3" {
-    bucket         = "devops-g5-iac-tfstate-827478161993"
+    bucket         = "devops-g5-iac-tfstate-240462142849"
     key            = "lab/terraform.tfstate"
     region         = "eu-west-1"
     dynamodb_table = "devops-g5-iac-tflock"
@@ -81,9 +81,15 @@ variable "use_console_bootstrap_ecr" {
   description = "When true, pull images from devops-g5-service-* (console lab). When false, use devops-g5-iac-service-*."
 }
 
+# Optional legacy CodePipeline path. New-account default: GitHub Actions OIDC deploy.
+variable "enable_codepipeline" {
+  type    = bool
+  default = false
+}
+
 variable "github_connection_arn" {
   type    = string
-  default = "arn:aws:codeconnections:eu-west-1:827478161993:connection/d67222a4-5213-41aa-b618-dc71335ec2c7"
+  default = ""
 }
 
 variable "github_full_repository_id" {
@@ -94,6 +100,12 @@ variable "github_full_repository_id" {
 variable "github_branch" {
   type    = string
   default = "main"
+}
+
+# When false, ECS desired counts are 0 so CI can push the first SHA images before scale-up.
+variable "enable_ecs_tasks" {
+  type    = bool
+  default = true
 }
 
 data "aws_caller_identity" "current" {}
@@ -311,7 +323,7 @@ module "service_b" {
   execution_role_arn = module.ecs_platform.execution_role_arn
   task_role_arn      = module.ecs_platform.task_role_arn
   aws_region         = var.aws_region
-  desired_count      = 1
+  desired_count      = var.enable_ecs_tasks ? 1 : 0
   assign_public_ip   = false
   owner_tag          = "service-b-owner"
   environment = {
@@ -338,7 +350,7 @@ module "service_c" {
   execution_role_arn = module.ecs_platform.execution_role_arn
   task_role_arn      = module.ecs_platform.task_role_arn
   aws_region         = var.aws_region
-  desired_count      = 1
+  desired_count      = var.enable_ecs_tasks ? 1 : 0
   assign_public_ip   = false
   owner_tag          = "service-c-owner"
   environment = {
@@ -367,7 +379,7 @@ module "service_a" {
   execution_role_arn   = module.ecs_platform.execution_role_arn
   task_role_arn        = module.ecs_platform.task_role_arn
   aws_region           = var.aws_region
-  desired_count        = 2
+  desired_count        = var.enable_ecs_tasks ? 2 : 0
   assign_public_ip     = false
   enable_load_balancer = true
   target_group_arn     = module.alb.target_group_arn
@@ -406,9 +418,25 @@ resource "terraform_data" "service_connect_mesh_refresh" {
   }
 }
 
-# --- CI/CD: GitHub (CodeConnections) → CodePipeline → CodeBuild → ECR iac → ECS iac ---
+# --- GitHub Actions OIDC (primary CI/CD for new account) ---
+
+module "github_oidc" {
+  source = "../../modules/github-oidc"
+
+  name_prefix             = var.name_prefix
+  github_org_repo         = var.github_full_repository_id
+  aws_region              = var.aws_region
+  ecr_repository_arns     = [for r in aws_ecr_repository.services : r.arn]
+  ecs_cluster_arn         = module.ecs_platform.cluster_arn
+  ecs_execution_role_arn  = module.ecs_platform.execution_role_arn
+  ecs_task_role_arn       = module.ecs_platform.task_role_arn
+  tags                    = local.common_tags
+}
+
+# --- Optional CI/CD: CodeConnections → CodePipeline (disabled unless enable_codepipeline) ---
 
 resource "aws_s3_bucket" "pipeline_artifacts" {
+  count  = var.enable_codepipeline ? 1 : 0
   bucket = "${var.name_prefix}-pipeline-artifacts-${local.account}"
   tags = merge(local.common_tags, {
     Name  = "${var.name_prefix}-pipeline-artifacts"
@@ -417,7 +445,8 @@ resource "aws_s3_bucket" "pipeline_artifacts" {
 }
 
 resource "aws_s3_bucket_public_access_block" "pipeline_artifacts" {
-  bucket                  = aws_s3_bucket.pipeline_artifacts.id
+  count                   = var.enable_codepipeline ? 1 : 0
+  bucket                  = aws_s3_bucket.pipeline_artifacts[0].id
   block_public_acls       = true
   block_public_policy     = true
   ignore_public_acls      = true
@@ -425,11 +454,13 @@ resource "aws_s3_bucket_public_access_block" "pipeline_artifacts" {
 }
 
 resource "aws_s3_bucket_versioning" "pipeline_artifacts" {
-  bucket = aws_s3_bucket.pipeline_artifacts.id
+  count  = var.enable_codepipeline ? 1 : 0
+  bucket = aws_s3_bucket.pipeline_artifacts[0].id
   versioning_configuration { status = "Enabled" }
 }
 
 data "aws_iam_policy_document" "codebuild_assume" {
+  count = var.enable_codepipeline ? 1 : 0
   statement {
     actions = ["sts:AssumeRole"]
     principals {
@@ -440,14 +471,16 @@ data "aws_iam_policy_document" "codebuild_assume" {
 }
 
 resource "aws_iam_role" "codebuild" {
+  count              = var.enable_codepipeline ? 1 : 0
   name               = "${var.name_prefix}-codebuild-role"
-  assume_role_policy = data.aws_iam_policy_document.codebuild_assume.json
+  assume_role_policy = data.aws_iam_policy_document.codebuild_assume[0].json
   tags               = merge(local.common_tags, { Name = "${var.name_prefix}-codebuild-role", Owner = "platform-owner" })
 }
 
 resource "aws_iam_role_policy" "codebuild" {
-  name = "${var.name_prefix}-codebuild"
-  role = aws_iam_role.codebuild.id
+  count = var.enable_codepipeline ? 1 : 0
+  name  = "${var.name_prefix}-codebuild"
+  role  = aws_iam_role.codebuild[0].id
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
@@ -460,8 +493,8 @@ resource "aws_iam_role_policy" "codebuild" {
         Effect = "Allow"
         Action = ["s3:GetObject", "s3:GetObjectVersion", "s3:PutObject", "s3:GetBucketLocation", "s3:ListBucket"]
         Resource = [
-          aws_s3_bucket.pipeline_artifacts.arn,
-          "${aws_s3_bucket.pipeline_artifacts.arn}/*"
+          aws_s3_bucket.pipeline_artifacts[0].arn,
+          "${aws_s3_bucket.pipeline_artifacts[0].arn}/*"
         ]
       },
       {
@@ -485,6 +518,7 @@ resource "aws_iam_role_policy" "codebuild" {
 }
 
 data "aws_iam_policy_document" "codepipeline_assume" {
+  count = var.enable_codepipeline ? 1 : 0
   statement {
     actions = ["sts:AssumeRole"]
     principals {
@@ -495,21 +529,23 @@ data "aws_iam_policy_document" "codepipeline_assume" {
 }
 
 resource "aws_iam_role" "codepipeline" {
+  count              = var.enable_codepipeline ? 1 : 0
   name               = "${var.name_prefix}-codepipeline-role"
-  assume_role_policy = data.aws_iam_policy_document.codepipeline_assume.json
+  assume_role_policy = data.aws_iam_policy_document.codepipeline_assume[0].json
   tags               = merge(local.common_tags, { Name = "${var.name_prefix}-codepipeline-role", Owner = "platform-owner" })
 }
 
 resource "aws_iam_role_policy" "codepipeline" {
-  name = "${var.name_prefix}-codepipeline"
-  role = aws_iam_role.codepipeline.id
+  count = var.enable_codepipeline ? 1 : 0
+  name  = "${var.name_prefix}-codepipeline"
+  role  = aws_iam_role.codepipeline[0].id
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
       {
         Effect   = "Allow"
         Action   = ["s3:GetObject", "s3:GetObjectVersion", "s3:PutObject", "s3:GetBucketVersioning", "s3:ListBucket"]
-        Resource = [aws_s3_bucket.pipeline_artifacts.arn, "${aws_s3_bucket.pipeline_artifacts.arn}/*"]
+        Resource = [aws_s3_bucket.pipeline_artifacts[0].arn, "${aws_s3_bucket.pipeline_artifacts[0].arn}/*"]
       },
       {
         Effect   = "Allow"
@@ -549,6 +585,7 @@ resource "aws_iam_role_policy" "codepipeline" {
 }
 
 module "pipeline_a" {
+  count  = var.enable_codepipeline ? 1 : 0
   source = "../../modules/cicd-service"
 
   name_prefix               = var.name_prefix
@@ -561,15 +598,16 @@ module "pipeline_a" {
   connection_arn            = var.github_connection_arn
   github_full_repository_id = var.github_full_repository_id
   github_branch             = var.github_branch
-  artifact_bucket           = aws_s3_bucket.pipeline_artifacts.bucket
-  codebuild_role_arn        = aws_iam_role.codebuild.arn
-  codepipeline_role_arn     = aws_iam_role.codepipeline.arn
+  artifact_bucket           = aws_s3_bucket.pipeline_artifacts[0].bucket
+  codebuild_role_arn        = aws_iam_role.codebuild[0].arn
+  codepipeline_role_arn     = aws_iam_role.codepipeline[0].arn
   watched_paths             = ["services/service-a/**", "shared/**"]
   owner_tag                 = "service-a-owner"
   tags                      = local.common_tags
 }
 
 module "pipeline_b" {
+  count  = var.enable_codepipeline ? 1 : 0
   source = "../../modules/cicd-service"
 
   name_prefix               = var.name_prefix
@@ -582,15 +620,16 @@ module "pipeline_b" {
   connection_arn            = var.github_connection_arn
   github_full_repository_id = var.github_full_repository_id
   github_branch             = var.github_branch
-  artifact_bucket           = aws_s3_bucket.pipeline_artifacts.bucket
-  codebuild_role_arn        = aws_iam_role.codebuild.arn
-  codepipeline_role_arn     = aws_iam_role.codepipeline.arn
+  artifact_bucket           = aws_s3_bucket.pipeline_artifacts[0].bucket
+  codebuild_role_arn        = aws_iam_role.codebuild[0].arn
+  codepipeline_role_arn     = aws_iam_role.codepipeline[0].arn
   watched_paths             = ["services/service-b/**", "shared/**"]
   owner_tag                 = "service-b-owner"
   tags                      = local.common_tags
 }
 
 module "pipeline_c" {
+  count  = var.enable_codepipeline ? 1 : 0
   source = "../../modules/cicd-service"
 
   name_prefix               = var.name_prefix
@@ -603,9 +642,9 @@ module "pipeline_c" {
   connection_arn            = var.github_connection_arn
   github_full_repository_id = var.github_full_repository_id
   github_branch             = var.github_branch
-  artifact_bucket           = aws_s3_bucket.pipeline_artifacts.bucket
-  codebuild_role_arn        = aws_iam_role.codebuild.arn
-  codepipeline_role_arn     = aws_iam_role.codepipeline.arn
+  artifact_bucket           = aws_s3_bucket.pipeline_artifacts[0].bucket
+  codebuild_role_arn        = aws_iam_role.codebuild[0].arn
+  codepipeline_role_arn     = aws_iam_role.codepipeline[0].arn
   watched_paths             = ["services/service-c/**", "shared/**"]
   owner_tag                 = "service-c-owner"
   tags                      = local.common_tags
@@ -697,10 +736,10 @@ check "required_tags_present" {
   }
 }
 
-check "pipelines_exist" {
+check "pipelines_or_gha" {
   assert {
-    condition     = module.pipeline_a.pipeline_name != "" && module.pipeline_b.pipeline_name != "" && module.pipeline_c.pipeline_name != ""
-    error_message = "All three GitHub-connected pipelines must exist."
+    condition     = var.enable_codepipeline ? length(module.pipeline_a) == 1 : module.github_oidc.role_arn != ""
+    error_message = "Either CodePipeline or GitHub Actions OIDC deploy role must be configured."
   }
 }
 
@@ -734,12 +773,15 @@ output "iac_ecr_urls" {
   value = { for k, r in aws_ecr_repository.services : k => r.repository_url }
 }
 output "pipelines" {
-  value = {
-    a = module.pipeline_a.pipeline_name
-    b = module.pipeline_b.pipeline_name
-    c = module.pipeline_c.pipeline_name
-  }
+  value = var.enable_codepipeline ? {
+    a = module.pipeline_a[0].pipeline_name
+    b = module.pipeline_b[0].pipeline_name
+    c = module.pipeline_c[0].pipeline_name
+  } : {}
+}
+output "github_actions_role_arn" {
+  value = module.github_oidc.role_arn
 }
 output "release_path" {
-  value = "build/push SHA via CodePipeline → set image_tag_{a,b,c} in tfvars → terraform plan/apply → ECS rolling deploy → prove SHA via ALB /version"
+  value = "push/merge main → GitHub Actions (OIDC) → build SHA → ECR devops-g5-iac-service-* → ECS deploy → prove via ALB /version"
 }
