@@ -1,0 +1,61 @@
+name: AWS reliability smoke
+
+# Authenticates to the Group 5 AWS account via OIDC and proves the greet user journey.
+# Set repository variable AWS_GHA_DEPLOY_ROLE_ARN to terraform output github_actions_role_arn.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "services/**"
+      - "shared/**"
+      - "infra/**"
+      - ".github/workflows/aws-reliability-smoke.yml"
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  AWS_REGION: eu-west-1
+
+jobs:
+  aws-smoke:
+    name: Prove greet journey in AWS
+    runs-on: ubuntu-latest
+    if: vars.AWS_GHA_DEPLOY_ROLE_ARN != ''
+
+    steps:
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_GHA_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Confirm account and region
+        run: |
+          aws sts get-caller-identity
+          test "${AWS_REGION}" = "eu-west-1"
+
+      - name: Resolve ALB DNS
+        id: alb
+        run: |
+          ALB_DNS=$(aws elbv2 describe-load-balancers \
+            --names devops-g5-iac-alb \
+            --query 'LoadBalancers[0].DNSName' --output text)
+          echo "dns=$ALB_DNS" >> "$GITHUB_OUTPUT"
+          echo "ALB=$ALB_DNS"
+
+      - name: Shallow health check
+        run: curl --fail --silent --show-error "http://${{ steps.alb.outputs.dns }}/health?shallow=1"
+
+      - name: Greet user journey (A→B→C→callback)
+        run: curl --fail --silent --show-error "http://${{ steps.alb.outputs.dns }}/greet-service-b"
+
+      - name: List firing reliability alarms
+        run: |
+          aws cloudwatch describe-alarms \
+            --alarm-name-prefix devops-g5-iac- \
+            --state-value ALARM \
+            --query 'MetricAlarms[].AlarmName' --output table || true

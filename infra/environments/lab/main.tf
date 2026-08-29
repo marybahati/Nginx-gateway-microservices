@@ -8,13 +8,9 @@ terraform {
     }
   }
 
-  backend "s3" {
-    bucket         = "devops-g5-iac-tfstate-240462142849"
-    key            = "lab/terraform.tfstate"
-    region         = "eu-west-1"
-    dynamodb_table = "devops-g5-iac-tflock"
-    encrypt        = true
-  }
+  # Account-specific: terraform init -backend-config=backend.hcl -reconfigure
+  # Generate backend.hcl via scripts/new-account-bootstrap.sh (see backend.hcl.example).
+  backend "s3" {}
 }
 
 provider "aws" {
@@ -106,6 +102,12 @@ variable "github_branch" {
 variable "enable_ecs_tasks" {
   type    = bool
   default = true
+}
+
+variable "alert_email" {
+  type        = string
+  default     = ""
+  description = "Optional SNS email for reliability alarms (confirm subscription in inbox)."
 }
 
 data "aws_caller_identity" "current" {}
@@ -418,19 +420,37 @@ resource "terraform_data" "service_connect_mesh_refresh" {
   }
 }
 
+# --- Observability: SLI dashboard + actionable alarms (production readiness) ---
+
+module "observability" {
+  source = "../../modules/observability"
+
+  name_prefix             = var.name_prefix
+  aws_region              = var.aws_region
+  alb_arn_suffix          = module.alb.alb_arn_suffix
+  target_group_arn_suffix = module.alb.target_group_arn_suffix
+  cluster_name            = module.ecs_platform.cluster_name
+  service_a_name          = module.service_a.service_name
+  service_a_log_group     = module.service_a.log_group_name
+  alert_email             = var.alert_email
+  tags                    = local.common_tags
+
+  depends_on = [module.service_a]
+}
+
 # --- GitHub Actions OIDC (primary CI/CD for new account) ---
 
 module "github_oidc" {
   source = "../../modules/github-oidc"
 
-  name_prefix             = var.name_prefix
-  github_org_repo         = var.github_full_repository_id
-  aws_region              = var.aws_region
-  ecr_repository_arns     = [for r in aws_ecr_repository.services : r.arn]
-  ecs_cluster_arn         = module.ecs_platform.cluster_arn
-  ecs_execution_role_arn  = module.ecs_platform.execution_role_arn
-  ecs_task_role_arn       = module.ecs_platform.task_role_arn
-  tags                    = local.common_tags
+  name_prefix            = var.name_prefix
+  github_org_repo        = var.github_full_repository_id
+  aws_region             = var.aws_region
+  ecr_repository_arns    = [for r in aws_ecr_repository.services : r.arn]
+  ecs_cluster_arn        = module.ecs_platform.cluster_arn
+  ecs_execution_role_arn = module.ecs_platform.execution_role_arn
+  ecs_task_role_arn      = module.ecs_platform.task_role_arn
+  tags                   = local.common_tags
 }
 
 # --- Optional CI/CD: CodeConnections → CodePipeline (disabled unless enable_codepipeline) ---
@@ -781,6 +801,15 @@ output "pipelines" {
 }
 output "github_actions_role_arn" {
   value = module.github_oidc.role_arn
+}
+output "reliability_dashboard" {
+  value = module.observability.dashboard_name
+}
+output "reliability_alarms" {
+  value = module.observability.alarm_names
+}
+output "reliability_sns_topic_arn" {
+  value = module.observability.sns_topic_arn
 }
 output "release_path" {
   value = "push/merge main → GitHub Actions (OIDC) → build SHA → ECR devops-g5-iac-service-* → ECS deploy → prove via ALB /version"
