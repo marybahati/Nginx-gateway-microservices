@@ -1,0 +1,7 @@
+# Copy to backend.hcl after bootstrap apply in the NEW account.
+# terraform init -backend-config=backend.hcl -reconfigure
+bucket         = "devops-g5-iac-tfstate-REPLACE_WITH_ACCOUNT_ID"
+key            = "lab/terraform.tfstate"
+region         = "eu-west-1"
+dynamodb_table = "devops-g5-iac-tflock"
+encrypt        = true

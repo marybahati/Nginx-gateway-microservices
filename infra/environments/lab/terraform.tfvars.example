@@ -1,9 +1,15 @@
 # Copy to terraform.tfvars (do not commit secrets). Image tags must be Git SHAs.
-aws_region                 = "eu-west-1"
-name_prefix                = "devops-g5-iac"
-use_console_bootstrap_ecr  = false
-enable_codepipeline        = false
-enable_ecs_tasks           = true
-image_tag_a                = "0000000"
-image_tag_b                = "0000000"
-image_tag_c                = "0000000"
+aws_region                = "eu-west-1"
+name_prefix               = "devops-g5-iac"
+use_console_bootstrap_ecr = false
+enable_codepipeline       = false
+enable_ecs_tasks          = true
+# First boot: set false until GHA/OIDC has pushed SHAs, or push images locally then set true.
+# enable_ecs_tasks       = false
+image_tag_a               = "0000000"
+image_tag_b               = "0000000"
+image_tag_c               = "0000000"
+# Optional — confirm the SNS email subscription after apply.
+alert_email               = ""
+# Only needed if enable_codepipeline = true
+# github_connection_arn  = "arn:aws:codeconnections:eu-west-1:ACCOUNT:connection/UUID"

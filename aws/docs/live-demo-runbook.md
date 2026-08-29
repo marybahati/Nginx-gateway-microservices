@@ -6,6 +6,8 @@
 **Namespace:** `group5-iac.internal`  
 **State backend:** `devops-g5-iac-tfstate-*` + `devops-g5-iac-tflock` (survive destroy)
 
+**New account?** See [new-account-migration.md](./new-account-migration.md) and `scripts/new-account-bootstrap.sh`.
+
 ```text
 Owner types. Team observes. Operator narrates. Coach asks questions. Evidence decides.
 ```

@@ -17,6 +17,8 @@ terraform.tfvars
 !terraform.tfvars.example
 !example.tfvars
 secrets.tfvars
+backend.hcl
+!backend.hcl.example
 .terraform.tfstate.lock.info
 
 # Module test working dirs / accidental local locks (root lock files are committed)
